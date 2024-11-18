@@ -1,0 +1,620 @@
+---
+title: "TCGA-LUAD: RNA-seq co-expression gene modules"
+output: html_notebook
+---
+
+This notebook uses the TCGA LUAD RNA-Seq dataset and aims to cluster genes in 20 modules. The raw data is filtered according to the gene variance, and only the first quartile of all genes with highest variance are retained. Z-score scaling is applied to each gene. A UMAP is ran on the normalized and filtered data where each dot represents a gene (dimensionality reduction along patient IDs). A clustering algorithm is applied on the UMAP latent projections.
+
+
+```{r}
+suppressPackageStartupMessages({
+  # Load libraries
+  library(data.table)
+  library(matrixStats)
+  library(uwot)
+  library(ggplot2)
+  library(fpc)
+  suppressPackageStartupMessages(library(dplyr))
+  library(glue)
+  library(msigdbr)
+  library(clusterProfiler)
+  library(org.Hs.eg.db)
+  library(enrichplot)
+  library(stringr)
+  library(glue)
+})
+```
+
+Define variables.
+```{r}
+pca_dims = 10
+num_n = 10
+min_d = 0.3
+
+n_clust = 20
+
+out_dir = "/gpfs/scratch/leh06/NivoPembro_Results/tcga_luad_rna_gene_modules_cleaned/"
+# Load module gene list
+# load(glue("{out_dir}/modules.{n_clust}c.RData"))
+```
+
+We load the TCGA LUAD RNA-Seq dataset and the corresponding annotation file in order to retrace all the gene names to the samples with a given identifier.
+
+```{r}
+# Load gene data
+gene_file = '/gpfs/data/tsirigoslab/home/leh06/TCGA_Gx_Img_Analysis/dataset/xenahubs/gdc/genomicMatrix/TCGA-LUAD/Xena_Matrices/TCGA-LUAD.htseq_counts.tsv'
+gx_data <- read.table(file = gene_file, sep = '\t', header = TRUE)
+```
+
+
+We compute the variance of each gene across patients, sort them out, and keep the top quartile.
+
+```{r}
+rownames(gx_data) <- gx_data$Ensembl_ID
+gx_data <- subset(gx_data, select = -Ensembl_ID)
+# Filter for variance
+# Top quartile
+gene_var <- rowVars(data.matrix(gx_data))
+cutoff <- quantile(gene_var, probs = 0.75)
+genes_selected <- names(gene_var)[gene_var >= cutoff]
+proteins_data <- gx_data[genes_selected,]
+```
+
+
+We normalized our data by using Z-score scaling.
+
+```{r}
+# Z-score scaling
+proteins_data_scaled <- t(scale(t(proteins_data)))
+```
+
+We run the UMAP and visualize the results.
+
+```{r}
+# UMAP
+gx.umap <- uwot::umap(proteins_data_scaled,min_dist = 0.0001)
+```
+
+```{r}
+df <- data.frame(x = gx.umap[,1],
+                 y = gx.umap[,2])
+
+# Filter out the small islets
+indexes_to_remove <- c(1:nrow(df))[(df$y < 5.5)
+                       & (df$x > (-6)) &
+                         !((df$y>3) & (df$x < (-4))) & (df$x < 6)]
+proteins_data_scaled <- proteins_data_scaled[indexes_to_remove,]
+df <- df[indexes_to_remove,]
+```
+Run PCA and clustering.
+```{r}
+pca <- prcomp(proteins_data_scaled)
+pca <- pca$x[,1:pca_dims]
+cluster <- cluster::pam(pca, k = n_clust, cluster.only = TRUE, pamonce = 5)
+```
+
+Create UMAPs and color by gene modules.
+```{r}
+df$color <- cluster
+df$color <- factor(paste0("Module_", df$color), levels = paste0("Module_", sort(unique(df$color))))
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+custom_palette = sample(unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))[1:n_clust], n_clust)
+png(filename=glue("{out_dir}gene_modules_umap.png"), res = 100, units = "in", width = 7, height = 5)
+print(ggplot(df, aes(x = x, y = y, color = color))+ geom_point(size = 0.7, alpha = 0.5) +
+        scale_color_manual(values = custom_palette)+ theme_classic()+ 
+        theme(axis.line = element_blank(), axis.title = element_blank(), axis.ticks = element_blank(),
+              axis.text = element_blank(), legend.title = element_blank()) +
+        guides(color = guide_legend(override.aes = list(size = 5, alpha = 1))))
+dev.off()
+```
+```{r}
+for (c in levels(df$color)){
+  df_cluster <- df
+  df_cluster$color[df$color != c] <- NA 
+  print(ggplot(df_cluster, aes(x = x, y = y, color = color))+ geom_point(size = 0.7, alpha = 0.5) +
+          scale_color_manual(values = "blue", na.value = "grey90")+ theme_classic()+ 
+          theme(axis.line = element_blank(), axis.title = element_blank(), axis.ticks = element_blank(),
+                axis.text = element_blank(), legend.title = element_blank()) +
+          guides(color = guide_legend(override.aes = list(size = 5, alpha = 1))))
+}
+```
+
+Create module scores matrix and save list of genes per module.
+```{r}
+module_genes <- list()
+module_scores <- data.frame(matrix(nrow = length(colnames(proteins_data_scaled)), ncol = n_clust, dimnames = list(colnames(proteins_data_scaled), paste0("Module_", c(1:n_clust)))))
+for (m in 1:n_clust){
+  gene_modules <- names(cluster)[cluster==m]
+  module_scores[, paste0("Module_",m)] <- colMeans(proteins_data_scaled[gene_modules,])
+  module_genes[[paste0("Module_",m)]] <- gene_modules
+}
+
+write.csv(module_scores, glue("{out_dir}/module.scores.{n_clust}c.csv"))
+saveRDS(module_genes, file = glue("{out_dir}/module.genelist.{n_clust}c.rds"))
+save.image(glue("{out_dir}/modules.{n_clust}c.RData"))
+```
+
+Load the mapping from ENSEMBL IDs to the gene names.
+```{r}
+annots_file = '/gpfs/data/tsirigoslab/home/leh06/TCGA_Gx_Img_Analysis/dataset/xenahubs/gdc/probeMap/gencode.v22.annotation.gene.probeMap.tsv'
+annots <- read.table(file = annots_file, sep = '\t', header = TRUE)
+rownames(annots) <- annots$id
+```
+
+Map the Entrez IDs names coming out of ClusterProfiler to gene names.
+
+```{r}
+map_enrichment_genes_2_names <- function(enrich_gene_list, enrich_gene_names_list, enrichment_df, annots){
+  enrichment_df_intermediate <- enrichment_df
+  enrichment_df_intermediate$fullid <- paste0(enrichment_df_intermediate$Cluster,enrichment_df_intermediate$Description,enrichment_df_intermediate$geneID)
+  enrichment_df_intermediate$geneID_split <- strsplit(as.character(enrichment_df_intermediate$geneID), "/")
+  enrichment_df_extended <- enrichment_df_intermediate %>%
+    unnest(geneID_split) %>%          
+    rename(Entrez_ID = geneID_split)  
+  
+  enrich_gene_df <- as.data.frame(unlist(enrich_gene_list))
+  names(enrich_gene_df) <- "Entrez_ID"
+  enrich_gene_names_df <- as.data.frame(unlist(enrich_gene_names_list))
+  enrich_gene_df$GeneName <- enrich_gene_names_df[,1]
+  enrich_gene_df <- unique(enrich_gene_df)
+  enrich_gene_df <- enrich_gene_df %>%
+  group_by(Entrez_ID) %>%
+  summarise(GeneName = str_c(GeneName, collapse = ";")) %>%
+  ungroup()
+
+  enrichment_df_merged <- left_join(enrichment_df_extended, enrich_gene_df, by = "Entrez_ID")
+
+  enrichment_df_final <- enrichment_df_merged %>%
+    group_by(fullid) %>%  
+    summarise(GeneNames = paste(na.omit(GeneName), collapse = "/"))
+  
+  enrichment_df$geneID <- enrichment_df_final$GeneNames
+  
+  return(enrichment_df)
+}
+```
+
+
+Get the entrez IDs of the genes.
+```{r}
+enrich_gene_list <- list()
+enrich_gene_names_list <- list()
+for (m in 1:n_clust) {
+  gene_modules <- names(cluster)[cluster == m]
+  gene_modules_ensembl <- str_replace(names(cluster)[cluster == m],
+                        pattern = ".[0-9]+$",
+                        replacement = "")
+  gene_entrez_ids <- mapIds(org.Hs.eg.db, keys = gene_modules_ensembl, keytype="ENSEMBL", column = "ENTREZID")
+  
+  gene_names <- annots[gene_modules[!is.na(gene_entrez_ids)], "gene"]
+  enrich_gene_names_list[[glue("Module_{m}")]] <- gene_names
+  enrich_gene_list[[glue("Module_{m}")]] <- gene_entrez_ids[!is.na(gene_entrez_ids)]
+}
+```
+
+```{r}
+# GO
+go_enrich <- compareCluster(geneCluster = enrich_gene_list,
+                              ont           = "BP",
+                              OrgDb = org.Hs.eg.db,
+                              pAdjustMethod = "BH",
+                              pvalueCutoff  = 0.001,
+                              qvalueCutoff  = 0.001,
+                              fun =  enrichGO)
+
+go_df <- as.data.frame(go_enrich)
+go_df <- map_enrichment_genes_2_names(enrich_gene_list, enrich_gene_names_list, go_df, annots)
+write.csv(go_df, glue("{out_dir}go.biological.enrichment.results.tcga_luad.{n_clust}c.csv"),row.names = F)
+
+# Filter for less hits, otherwise it is hard to visualize
+go_df_filtered <- go_df
+go_df_filtered$GeneRatio <- sapply(go_df_filtered$GeneRatio, function(x) {
+  ratio_parts <- as.numeric(unlist(strsplit(x, "/")))
+  ratio_parts[1] / ratio_parts[2]
+})
+go_df_filtered <- go_df_filtered[order(go_df_filtered$p.adjust),][1:100,]
+go_df_filtered$Description <- str_sub(go_df_filtered$Description,1L,50L)
+
+png(file=glue("{out_dir}go.biological.enrichment.results.tcga_luad.{n_clust}c.png"),  width =15, height = 25, units = 'in', res = 200)
+# Generate the plot
+print(ggplot(go_df_filtered, aes(x = Cluster,
+                        y = Description,
+                        size = p.adjust, color = GeneRatio)) +
+  geom_point() +
+  labs(color = "GeneRatio", size = "P-value adjusted") +
+  scale_color_gradient(high = "red", low = "orange") +
+  theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1, size = 22),
+        axis.text.y = element_text(size = 16),  # Adjust y-axis text size here
+        legend.title=element_text(size=20),
+        legend.text = element_text(size = 18),
+        axis.title = element_text(size = 24),
+        plot.margin = unit(c(1, 1, 1, 3), "cm")) + # Adjust left margin for longer y labels
+  xlab("Gene Modules") +
+  ylab("GO Pathways") +
+  scale_size(trans = "reverse"))
+dev.off()
+
+for (m in unique(go_df_filtered$Cluster)){
+  print(m)
+  print(go_df_filtered[go_df_filtered$Cluster == m,"Description"])
+  print("")
+}
+```
+
+```{r}
+# GO
+go_enrich_molecular <- compareCluster(geneCluster = enrich_gene_list,
+                              ont           = "MF",
+                              OrgDb = org.Hs.eg.db,
+                              pAdjustMethod = "BH",
+                              pvalueCutoff  = 0.001,
+                              qvalueCutoff  = 0.001,
+                              fun =  enrichGO)
+
+go_mol_df <- as.data.frame(go_enrich_molecular)
+go_mol_df <- map_enrichment_genes_2_names(enrich_gene_list, enrich_gene_names_list, go_mol_df, annots)
+write.csv(go_mol_df, glue("{out_dir}go.molecular.enrichment.results.tcga_luad.{n_clust}c.csv"),row.names = F)
+
+# Filter for less hits, otherwise it is hard to visualize
+go_mol_df_filtered <- go_mol_df
+go_mol_df_filtered$GeneRatio <- sapply(go_mol_df_filtered$GeneRatio, function(x) {
+  ratio_parts <- as.numeric(unlist(strsplit(x, "/")))
+  ratio_parts[1] / ratio_parts[2]
+})
+go_mol_df_filtered <- go_mol_df_filtered[order(go_mol_df_filtered$p.adjust),][1:100,]
+go_mol_df_filtered$Description <- str_sub(go_mol_df_filtered$Description,1L,50L)
+
+png(file=glue("{out_dir}go.molecular.enrichment.results.tcga_luad.{n_clust}c.png"),  width =15, height = 20, units = 'in', res = 200)
+# Generate the plot
+print(ggplot(go_mol_df_filtered, aes(x = Cluster,
+                        y = Description,
+                        size = p.adjust, color = GeneRatio)) +
+  geom_point() +
+  labs(color = "GeneRatio", size = "P-value adjusted") +
+  scale_color_gradient(high = "red", low = "orange") +
+  theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1, size = 22),
+        axis.text.y = element_text(size = 16), 
+        legend.title=element_text(size=20),
+        legend.text = element_text(size = 18),
+        axis.title = element_text(size = 24),
+        plot.margin = unit(c(1, 1, 1, 3), "cm")) +
+  xlab("Gene Modules") +
+  ylab("GO Pathways") +
+  scale_size(trans = "reverse"))
+dev.off()
+
+for (m in unique(go_mol_df_filtered$Cluster)){
+  print(m)
+  print(go_mol_df_filtered[go_mol_df_filtered$Cluster == m,"Description"])
+  print("")
+}
+```
+
+```{r}
+# GO
+go_enrich_cellular <- compareCluster(geneCluster = enrich_gene_list,
+                              ont           = "MF",
+                              OrgDb = org.Hs.eg.db,
+                              pAdjustMethod = "BH",
+                              pvalueCutoff  = 0.001,
+                              qvalueCutoff  = 0.001,
+                              fun =  enrichGO)
+
+go_cell_df <- as.data.frame(go_enrich_cellular)
+go_cell_df <- map_enrichment_genes_2_names(enrich_gene_list, enrich_gene_names_list, go_cell_df, annots)
+write.csv(go_cell_df, glue("{out_dir}go.cellular.enrichment.results.tcga_luad.{n_clust}c.csv"),row.names = F)
+
+# Filter for less hits, otherwise it is hard to visualize
+go_cell_df_filtered <- go_cell_df
+go_cell_df_filtered$GeneRatio <- sapply(go_cell_df_filtered$GeneRatio, function(x) {
+  ratio_parts <- as.numeric(unlist(strsplit(x, "/")))
+  ratio_parts[1] / ratio_parts[2]
+})
+go_cell_df_filtered <- go_cell_df_filtered[order(go_cell_df_filtered$p.adjust),][1:100,]
+go_cell_df_filtered$Description <- str_sub(go_cell_df_filtered$Description,1L,50L)
+
+png(file=glue("{out_dir}go.cellular.enrichment.results.tcga_luad.{n_clust}c.png"),  width =15, height = 20, units = 'in', res = 200)
+# Generate the plot
+print(ggplot(go_cell_df_filtered, aes(x = Cluster,
+                        y = Description,
+                        size = p.adjust, color = GeneRatio)) +
+  geom_point() +
+  labs(color = "GeneRatio", size = "P-value adjusted") +
+  scale_color_gradient(high = "red", low = "orange") +
+  theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1, size = 22),
+        axis.text.y = element_text(size = 16),  # Adjust y-axis text size here
+        legend.title=element_text(size=20),
+        legend.text = element_text(size = 18),
+        axis.title = element_text(size = 24),
+        plot.margin = unit(c(1, 1, 1, 3), "cm")) + # Adjust left margin for longer y labels
+  xlab("Gene Modules") +
+  ylab("GO Pathways") +
+  scale_size(trans = "reverse"))
+dev.off()
+
+for (m in unique(go_cell_df_filtered$Cluster)){
+  print(m)
+  print(go_cell_df_filtered[go_cell_df_filtered$Cluster == m,"Description"])
+  print("")
+}
+```
+
+
+```{r}
+# KEGG
+kegg_enrich <- compareCluster(geneCluster = enrich_gene_list,
+                                   pAdjustMethod = "BH",
+                                   pvalueCutoff  = 0.01,
+                                   qvalueCutoff  = 0.01,
+                                   fun = enrichKEGG,
+                                   organism = "hsa", use_internal_data=T)
+kegg_df <- as.data.frame(kegg_enrich)
+kegg_df <- map_enrichment_genes_2_names(enrich_gene_list, enrich_gene_names_list, kegg_df, annots)
+write.csv(kegg_df, glue("{out_dir}kegg.enrichment.results.tcga_luad.{n_clust}c.csv"),row.names = F)
+
+# Filter for less hits, otherwise it is hard to visualize
+kegg_df_filtered <- kegg_df
+kegg_df_filtered$GeneRatio <- sapply(kegg_df_filtered$GeneRatio, function(x) {
+  ratio_parts <- as.numeric(unlist(strsplit(x, "/")))
+  ratio_parts[1] / ratio_parts[2]
+})
+kegg_df_filtered <- kegg_df_filtered[order(kegg_df_filtered$p.adjust),][1:100,]
+
+png(file=glue("{out_dir}kegg.enrichment.results.tcga_luad.{n_clust}c.png"),  width =15, height = 20, units = 'in', res = 200)
+# Generate the plot
+print(ggplot(kegg_df_filtered, aes(x = Cluster,
+                        y = Description,
+                        size = p.adjust, color = GeneRatio)) +
+  geom_point() +
+  labs(color = "GeneRatio", size = "P-value adjusted") +
+  scale_color_gradient(high = "red", low = "orange") +
+  theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1, size = 22),
+        axis.text.y = element_text(size = 16),  # Adjust y-axis text size here
+        legend.title=element_text(size=20),
+        legend.text = element_text(size = 18),
+        axis.title = element_text(size = 24),
+        plot.margin = unit(c(1, 1, 1, 3), "cm")) + # Adjust left margin for longer y labels
+  xlab("Gene Modules") +
+  ylab("KEGG Pathways") +
+  scale_size(trans = "reverse"))
+dev.off()
+
+for (m in unique(kegg_df_filtered$Cluster)){
+  print(m)
+  print(kegg_df_filtered[kegg_df_filtered$Cluster == m,"Description"])
+  print("")
+}
+```
+
+```{r}
+# Hallmarks of cancer
+hallmark_genes <- msigdbr(species = "Homo sapiens", category = "H")
+hallmark_list <- split(hallmark_genes$gene_symbol, hallmark_genes$gs_name)
+hallmark_entrez <- bitr(hallmark_genes$gene_symbol,
+                        fromType = "SYMBOL",
+                        toType = "ENTREZID",
+                        OrgDb = org.Hs.eg.db)
+hallmark_entrez <- hallmark_genes %>%
+                   left_join(hallmark_entrez, by = c("gene_symbol" = "SYMBOL"))
+hallmark_list_entrez <- split(hallmark_entrez$ENTREZID, hallmark_entrez$gs_name)
+hallmark_df_entrez <- do.call(rbind, lapply(names(hallmark_list_entrez), function(term) {
+  data.frame(gs_name = term, ENTREZID = hallmark_list_entrez[[term]])
+}))
+
+hallmarks_enrich <- compareCluster(geneCluster = enrich_gene_list,
+                                   pAdjustMethod = "BH",
+                                   pvalueCutoff  = 0.01,
+                                   qvalueCutoff  = 0.01,
+                                   fun = "enricher",
+                                   TERM2GENE = hallmark_df_entrez)
+
+hallmarks_df <- as.data.frame(hallmarks_enrich)
+hallmarks_df <- map_enrichment_genes_2_names(enrich_gene_list, enrich_gene_names_list, hallmarks_df, annots)
+write.csv(hallmarks_df, glue("{out_dir}hallmarks.enrichment.results.tcga_luad.{n_clust}c.csv"),row.names = F)
+
+# Filter for less hits, otherwise it is hard to visualize
+hallmarks_df_filtered <- hallmarks_df
+hallmarks_df_filtered$GeneRatio <- sapply(hallmarks_df_filtered$GeneRatio, function(x) {
+  ratio_parts <- as.numeric(unlist(strsplit(x, "/")))
+  ratio_parts[1] / ratio_parts[2]
+})
+
+hallmarks_df_filtered$Description <- str_replace_all(hallmarks_df_filtered$Description, "HALLMARK_","")
+
+png(file=glue("{out_dir}hallmarks.enrichment.results.tcga_luad.{n_clust}c.png"),  width =15, height = 15, units = 'in', res = 200)
+# Generate the plot
+print(ggplot(hallmarks_df_filtered, aes(x = Cluster,
+                        y = Description,
+                        size = p.adjust, color = GeneRatio)) +
+  geom_point() +
+  labs(color = "GeneRatio", size = "P-value adjusted") +
+  scale_color_gradient(high = "red", low = "orange") +
+  theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+  theme(axis.text.x = element_text(angle = 90, vjust=1, hjust=1, size = 22),
+        axis.text.y = element_text(size = 16),  # Adjust y-axis text size here
+        legend.title=element_text(size=20),
+        legend.text = element_text(size = 18),
+        axis.title = element_text(size = 24),
+        plot.margin = unit(c(1, 1, 1, 3), "cm")) + # Adjust left margin for longer y labels
+  xlab("Gene Modules") +
+  ylab("Hallmarks of Cancer") +
+  scale_size(trans = "reverse"))
+dev.off()
+```
+
+
+Resave the UMAP with their corresponding module names (from gene set enrichment analysis above.)
+
+```{r}
+# Load the labels for the modules 
+module_label_df <- read.csv(glue("{out_dir}tcga_luad_gene_modules_names.csv"))
+df$Module <- df$color
+df <- left_join(df, module_label_df, by = "Module")
+df$color <- paste0(str_replace_all(df$Module, "Module_", "M"), " - ", str_replace_all(df$Label, "_", " "))
+
+# Resave the umap with module names
+df$color <- factor(df$color, levels = unique(df$color)[order(as.numeric(sub("M(\\d+)", "\\1", str_split(unique(df$color), " - ", simplify = T)[,1])))])
+
+png(filename=paste0(out_dir, "gene_modules_umap.png"), res = 100, units = "in", width = 12, height = 5)
+print(ggplot(df, aes(x = x, y = y, color = color))+ geom_point(size = 0.7, alpha = 0.5) +
+        scale_color_manual(values = custom_palette)+ theme_classic()+ 
+        theme(axis.line = element_blank(), axis.title = element_blank(), axis.ticks = element_blank(),
+              axis.text = element_blank(), legend.title = element_blank()) +
+        guides(color = guide_legend(override.aes = list(size = 7, alpha = 1), ncol = 2)))
+dev.off()
+```
+
+
+Tile compositions from TCGA
+```{r}
+cluster_csv_tcga <- read.csv("/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/results/BarlowTwins_3/tcga_luad_cell_224px_20x/h224_w224_n3_zdim128/survival/adatas/tcga_luad_cell_224px_20x_he_complete_lungsubtype_survival_leiden_1p0__fold1.csv")
+cluster_csv_tcga_test <- read.csv("/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/results/BarlowTwins_3/tcga_luad_cell_224px_20x/h224_w224_n3_zdim128/survival/adatas/tcga_luad_cell_224px_20x_he_complete_lungsubtype_survival_leiden_1p0__fold1_test.csv")
+cluster_csv_tcga <- rbind(cluster_csv_tcga, cluster_csv_tcga_test)
+tilecomp.df <- data.frame(matrix(nrow = 0, ncol = 5, dimnames = list(NULL, c("Cluster", "Patient", "TileComposition", "os_event_data", "os_event_ind"))))
+
+labels_full <- cluster_csv_tcga[,c("slides", "tiles", "samples", "os_event_ind", "os_event_data")]
+labels_full$cluster <- cluster_csv_tcga$leiden_1.0
+
+nb_tile_patients <- data.frame(table(labels_full$samples))
+names(nb_tile_patients) <- c("samples", "total_nb_tiles")
+nb_tile_patients <- join(nb_tile_patients, labels_full, by = "samples", type = "left", match = "first")[,c("samples","total_nb_tiles", "os_event_data", "os_event_ind")]
+
+for (c in unique(labels_full$cluster)){
+  count_df <- table(labels_full[labels_full$cluster == c, "samples"])
+  if (nrow(count_df)>0){
+    count_df <- data.frame(count_df)
+    names(count_df) <- c("samples", "Freq")
+    count_df <- join(count_df, nb_tile_patients, by = "samples", type = "left", match = "first")
+    count_df$tile_composition <- count_df$Freq/count_df$total_nb_tiles*100
+    count_df <- rbind(count_df, data.frame(samples = nb_tile_patients$samples[! nb_tile_patients$samples %in% count_df$samples], os_event_data = nb_tile_patients$os_event_data[! nb_tile_patients$samples %in% count_df$samples], Freq = rep(0, nrow(nb_tile_patients) - nrow(count_df)), total_nb_tiles = nb_tile_patients$total_nb_tiles[!nb_tile_patients$samples %in% count_df$samples], tile_composition = rep(0, nrow(nb_tile_patients) - nrow(count_df)),
+                                           os_event_ind = nb_tile_patients$os_event_ind[! nb_tile_patients$samples %in% count_df$samples]))
+  } else {
+    count_df <- data.frame(samples = nb_tile_patients$samples, os_event_data = nb_tile_patients$os_event_data, total_nb_tiles = nb_tile_patients$total_nb_tiles, tile_composition = rep(0, nrow(nb_tile_patients)),
+                                           os_event_ind = nb_tile_patients$os_event_ind)
+  }
+
+  # Add tile compositions to dataframe
+  tilecomp.df <- rbind(tilecomp.df, data.frame(Cluster = rep(c, nrow(count_df)), Patient = count_df$samples, TileComposition = count_df$tile_composition, os_event_data = count_df$os_event_data, os_event_ind = count_df$os_event_ind))
+}
+```
+
+Compute the correlations between module scores and patient cn-HPC composition vectors.
+```{r}
+module_scores$X <- str_replace_all(rownames(module_scores), "\\.", "\\-")
+module_scores <- module_scores[str_sub(str_split(module_scores$X,"\\-",simplify = T)[,4], 1, 2) == "01",]
+module_scores$X <- str_sub(module_scores$X, 1, 12)
+module_scores <- module_scores %>%
+  group_by(X) %>%
+  summarize(across(everything(), \(x) mean(x, na.rm = TRUE)))
+module_scores <- as.data.frame(module_scores)
+rownames(module_scores) <- module_scores$X
+module_scores <- subset(module_scores, select=-c(X))
+
+gene_modules_mHPC_results <- data.frame()
+for (m in names(module_scores)){
+  for (c in unique(tilecomp.df$Cluster)){
+    common_patients <- intersect(rownames(module_scores), tilecomp.df$Patient)
+    tilecomp.mat <- tilecomp.df[,c("Cluster", "Patient", "TileComposition")] %>%
+        pivot_wider(names_from = Cluster, values_from = TileComposition, values_fill = 0)
+    tilecomp.mat <- as.data.frame(tilecomp.mat)
+    rownames(tilecomp.mat) <- tilecomp.mat$Patient
+    tilecomp.mat <- subset(tilecomp.mat, select=-c(Patient))
+    names(tilecomp.mat) <- paste0("cn-HPC", names(tilecomp.mat))
+    result <- cor.test(module_scores[common_patients,m], tilecomp.mat[common_patients, paste0("cn-HPC",c)])
+    gene_modules_mHPC_results <- rbind(gene_modules_mHPC_results, data.frame(Cluster = paste0("cn-HPC",c),
+                                               GeneModule = m,
+                                               Corr = result$estimate,
+                                               Pval = result$p.value))
+  }
+}
+
+gene_modules_mHPC_results$p.adj <- p.adjust(gene_modules_mHPC_results$Pval, method = "BH")
+gene_modules_hpc_results_filtered <- gene_modules_mHPC_results
+gene_modules_hpc_results_filtered$p.adj[gene_modules_hpc_results_filtered$p.adj > 0.05] <- NA
+# gene_modules_hpc_results_filtered$padj.log <- -log10(gene_modules_hpc_results_filtered$p.adj)
+
+gene_modules_hpc_results_filtered$Cluster <- factor(gene_modules_hpc_results_filtered$Cluster, levels = paste0("cn-HPC",sort(as.integer(unique(tilecomp.df$Cluster)))))
+
+# Add the names of the modules
+gene_modules_hpc_results_filtered <- left_join(gene_modules_hpc_results_filtered, module_label_df, by = c("GeneModule"= "Module"))
+gene_modules_hpc_results_filtered$GeneModule <- paste0(str_replace_all(gene_modules_hpc_results_filtered$GeneModule, "Module_", "M"), " - ", str_replace_all(gene_modules_hpc_results_filtered$Label, "_", " "))
+
+gene_modules_hpc_results_filtered$GeneModule <- factor(gene_modules_hpc_results_filtered$GeneModule, levels = unique(gene_modules_hpc_results_filtered$GeneModule)[order(as.numeric(sub("M(\\d+)", "\\1", str_split(unique(gene_modules_hpc_results_filtered$GeneModule), " - ", simplify = T)[,1])), decreasing = T)])
+
+gene_modules_hpc_results_filtered$Activation <- NA
+gene_modules_hpc_results_filtered$Activation[gene_modules_hpc_results_filtered$Corr > 0] <- "Pathway activation"
+gene_modules_hpc_results_filtered$Activation[gene_modules_hpc_results_filtered$Corr < 0] <- "Pathway suppression"
+
+png(file=paste0(out_dir, "tcga_gene_modules_HPC_analysis.png"),  width =17, height = 10, units = 'in', res = 200)
+print(ggplot(gene_modules_hpc_results_filtered, aes(x = Cluster, 
+                          y = GeneModule, 
+                          color = Activation, size = p.adj)) + 
+  geom_point() +
+  labs(color = "", size = "Adjusted p-values", y = "Gene Modules", x = "cn-HPC Clusters") +
+  scale_color_manual(values = c("red", "blue")) +
+  theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1), axis.text = element_text(size = 15),
+        axis.title=element_text(size=15), legend.title=element_text(size=15), legend.text = element_text(size =15)) +
+    scale_size(trans = 'reverse') + 
+    guides(color = guide_legend(override.aes = list(size = 8, alpha = 1))))
+dev.off()
+```
+
+Cell deconvolution analysis using BayesPrism results
+
+```{r}
+cell_composition_tcga <- read.csv("/gpfs/data/abl/home/shenkn01/LUAD_submission/revisions/tumor_analysis/bayesprism/TCGA_bulk/revisions_TCGA_tumor_bp.res.rdata_final.csv")
+names(cell_composition_tcga)[1] <- "Patient"
+rownames(cell_composition_tcga) <- str_sub(cell_composition_tcga$Patient, 1, 12)
+cell_composition_tcga <- subset(cell_composition_tcga, select = -Patient)
+
+cell_composition_HPC_results <- data.frame()
+for (celltype in names(cell_composition_tcga)){
+  for (c in unique(tilecomp.df$Cluster)){
+    common_patients <- intersect(rownames(cell_composition_tcga), tilecomp.df$Patient)
+    tilecomp.mat <- tilecomp.df[,c("Cluster", "Patient", "TileComposition")] %>%
+        pivot_wider(names_from = Cluster, values_from = TileComposition, values_fill = 0)
+    tilecomp.mat <- as.data.frame(tilecomp.mat)
+    rownames(tilecomp.mat) <- tilecomp.mat$Patient
+    tilecomp.mat <- subset(tilecomp.mat, select=-c(Patient))
+    names(tilecomp.mat) <- paste0("cn-HPC", names(tilecomp.mat))
+    result <- cor.test(cell_composition_tcga[common_patients,celltype], tilecomp.mat[common_patients, paste0("cn-HPC",c)])
+    cell_composition_HPC_results <- rbind(cell_composition_HPC_results, data.frame(Cluster = paste0("cn-HPC",c),
+                                               CellType = celltype,
+                                               Corr = result$estimate,
+                                               Pval = result$p.value))
+  }
+}
+
+cell_composition_HPC_results$p.adj <- p.adjust(cell_composition_HPC_results$Pval, method = "BH")
+cell_composition_HPC_results_filtered <- cell_composition_HPC_results
+cell_composition_HPC_results_filtered$p.adj[cell_composition_HPC_results_filtered$p.adj > 0.05] = NA
+
+cell_composition_HPC_results_filtered$Cluster <- factor(cell_composition_HPC_results_filtered$Cluster, levels = paste0("cn-HPC",sort(as.integer(unique(tilecomp.df$Cluster)))))
+cell_composition_HPC_results_filtered$CellType <- factor(cell_composition_HPC_results_filtered$CellType)
+
+cell_composition_HPC_results_filtered$Category <- NA
+cell_composition_HPC_results_filtered$Category[cell_composition_HPC_results_filtered$Corr > 0] <- "Enriched"
+cell_composition_HPC_results_filtered$Category[cell_composition_HPC_results_filtered$Corr < 0] <- "Depleted"
+
+cell_composition_HPC_results_filtered$CellType <- str_replace_all(cell_composition_HPC_results_filtered$CellType, "\\.", "-")
+
+png(file=glue("{output_parent_dir}tcga_cell_composition_HPC_analysis.png"),  width =17, height = 13, units = 'in', res = 200)
+print(ggplot(cell_composition_HPC_results_filtered, aes(x = Cluster, 
+                          y = CellType, 
+                          color = Category, size = p.adj)) + 
+  geom_point() +
+  labs(color = "", size = "pvalue adjusted", y = "Cell Types", x = "HPC Clusters") +
+  scale_color_manual(values = c("blue","red")) +
+  theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+  theme(axis.text.x = element_text(angle = 45, vjust=1, hjust=1, size = 20), axis.text = element_text(size = 20),
+        axis.title=element_text(size=20), legend.title=element_text(size=20),
+        legend.text = element_text(size = 18)) +
+    scale_size(trans = 'reverse') +
+    guides(color = guide_legend(override.aes = list(size = 8, alpha = 1))))
+dev.off()
+```

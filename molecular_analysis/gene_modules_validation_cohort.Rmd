@@ -1,0 +1,193 @@
+---
+title: "TCGA-LUAD: RNA-seq co-expression gene modules"
+output: html_notebook
+---
+
+This notebook uses the NYU GeoMx WTA dataset.
+
+```{r}
+suppressPackageStartupMessages({
+  # Load libraries
+  library(data.table)
+  library(matrixStats)
+  library(ggplot2)
+  library(fpc)
+  library(glue)
+  library(msigdbr)
+  library(clusterProfiler)
+  library(org.Hs.eg.db)
+  library(enrichplot)
+  library(stringr)
+  library(glue)
+  library(readxl)
+  library(dplyr)
+})
+```
+
+
+```{r}
+# Get the module gene list from TCGA-LUAD
+module_genes <- readRDS(file = "/gpfs/scratch/leh06/NivoPembro_Results/tcga_luad_rna_gene_modules_cleaned/module.genelist.20c.rds")
+annots_file = '/gpfs/data/tsirigoslab/home/leh06/TCGA_Gx_Img_Analysis/dataset/xenahubs/gdc/probeMap/gencode.v22.annotation.gene.probeMap.tsv'
+annots <- read.table(file = annots_file, sep = '\t', header = TRUE)
+rownames(annots) <- annots$id
+module_genes <- lapply(module_genes, function(ensembl_ids) {
+    # Get gene names by matching Ensembl IDs with the rownames of the DataFrame
+    gene_names <- annots$gene[match(ensembl_ids, rownames(annots))]
+    return(gene_names)
+  })
+```
+
+Load the WTA data and clinical information.
+```{r}
+wta_counts <- read_excel("/gpfs/data/tsirigoslab/home/leh06/NanoString/20230131_Pembro-Nivo_wta/Q3_Norm_Filtered (4).xlsx")
+wta_counts <- column_to_rownames(wta_counts, var = "TargetName")
+
+clin_info <- read.csv("/gpfs/data/tsirigoslab/home/leh06/PathGAN/clinical_data/nivo_pembro_clinical_041724.csv")
+
+# Add age
+pembro_age_df <- read.csv("/gpfs/data/tsirigoslab/home/leh06/PathGAN/clinical_data/S1801510EvaluationOf_DATA_LABELS_2021-03-17_1104_Pembro.csv")
+nivo_age_df <- read.csv("/gpfs/data/tsirigoslab/home/leh06/PathGAN/clinical_data/S1801510EvaluationOf_DATA_LABELS_2021-03-17_1104_Nivo CORRECTED.csv")
+# One patient without age but birth date
+nivo_age_df$Age[nivo_age_df$Case.1510.ID.. == "N302"] <- round(as.numeric(difftime(as.Date(clin_info$TreatmentStartDate[clin_info$Case.1510.ID.. == "N302"]), as.Date(nivo_age_df$Age[nivo_age_df$Case.1510.ID.. == "N302"], "%m/%d/%y"), units = "weeks"))/52.143)
+
+clin_info <- left_join(clin_info, rbind(pembro_age_df[,c("Case.1510.ID..", "Age")], nivo_age_df[,c("Case.1510.ID..", "Age")]), by = "Case.1510.ID..")
+clin_info$samples <- clin_info$Case.1510.ID..
+
+key_geomx_wta <- read_excel("/gpfs/data/tsirigoslab/home/leh06//NanoString/Key_GeoMx_071322.xlsx", sheet = "WTA")
+
+# Get single ROI per row
+key_geomx_wta.df <- data.frame()
+for (i in 1:length(key_geomx_wta$ROI_IDs)){
+  for (roi in str_split(key_geomx_wta$ROI_IDs[i], "\\, ", simplify = T)){
+    key_geomx_wta.df <- rbind(key_geomx_wta.df, data.frame(SlideID = key_geomx_wta$SlideID[i],
+                                                                   samples = key_geomx_wta$CaseID[i], 
+                                                                   PatientID = key_geomx_wta$PatientID[i],
+                                                                   ROI_ID = roi,
+                                                                   ScanID = key_geomx_wta$ScanID[i]))
+  }
+}
+
+clin_info_sub <- distinct(clin_info[,c("Case.1510.ID..", "response", "Age")])
+wta_counts.diff <- as.data.frame(t(wta_counts))
+wta_counts.diff$Group.1 <- names(wta_counts)
+
+key_geomx_wta.df$FullID <- paste0(key_geomx_wta.df$SlideID, " | ", key_geomx_wta.df$ROI_ID)
+wta_counts.diff$FullID <- paste0(str_split(wta_counts.diff$Group.1, " | ", simplify = T)[,1], " | ", str_split(wta_counts.diff$Group.1, " | ", simplify = T)[,3])
+wta_counts.diff$Case.1510.ID.. <- left_join(wta_counts.diff, key_geomx_wta.df, by = "FullID")$PatientID
+```
+
+Normalize the WTA data and average the gene expression for each patient across ROIs.
+```{r}
+wta_counts.pankplus <- wta_counts.diff[grepl("\\+", wta_counts.diff$Group.1),]
+
+wta_counts.pankplus.norm <- as.data.frame(scale(wta_counts.pankplus[,!names(wta_counts.pankplus) %in% c("Group.1","FullID","Case.1510.ID..")]))
+wta_counts.pankplus.norm$samples <- wta_counts.pankplus[,"Case.1510.ID.."]
+wta_counts.pankplus.norm <- wta_counts.pankplus.norm %>%
+  group_by(samples) %>%
+  summarize(across(everything(), \(x) mean(x, na.rm = TRUE)))
+wta_counts.pankplus.norm <- as.data.frame(wta_counts.pankplus.norm)
+rownames(wta_counts.pankplus.norm)<-wta_counts.pankplus.norm$samples
+wta_counts.pankplus.norm <- subset(wta_counts.pankplus.norm, select = -c(samples))
+
+gene_module_pankplus <- data.frame(matrix(nrow = nrow(wta_counts.pankplus.norm), ncol = length(module_genes), dimnames = list(rownames(wta_counts.pankplus.norm),names(module_genes))))
+for (m in 1:length(module_genes)){
+  genes <- module_genes[[m]]
+  module_name <- names(module_genes)[m]
+  gene_module_pankplus[,module_name] <- rowMeans(wta_counts.pankplus.norm[,genes %in% names(wta_counts.pankplus.norm)])
+}
+```
+
+Correlation between cn-HPCs and genes
+```{r}
+gene_modules <- names(gene_module_pankplus)
+
+gene_module_pankplus$Case.1510.ID.. <- rownames(gene_module_pankplus)
+gene_module_pankplus <- left_join(gene_module_pankplus, unique(clin_info_immuno[,c("Case.1510.ID..", "BOR")]), by = "Case.1510.ID..")
+gene_module_pankplus_cleaned <- gene_module_pankplus[gene_module_pankplus$BOR!="Unknown",]
+gene_module_pankplus_cleaned_toplot <- melt(gene_module_pankplus_cleaned)
+names(gene_module_pankplus_cleaned_toplot) <- c("samples", "response", "GeneModule","ModuleScore")
+
+png(filename=glue("{output_parent_dir}boxplot_wta_response.png"), res = 200, units = "in", width = 25, height = 10)
+print(ggplot(gene_module_pankplus_cleaned_toplot,
+     aes(x = response,
+         y = ModuleScore,
+         fill = response)) + geom_boxplot() +
+geom_jitter(shape=1, position=position_jitter(0.2)) +
+scale_fill_manual(values=c("#00BFC4","#F8766D"))+ 
+facet_grid(. ~ GeneModule) + theme_bw() + theme(legend.position = "none", axis.text.x = element_text(angle = 90), axis.title.x = element_blank(), text = element_text(size=20)) + stat_compare_means(label = "p.format", method = "wilcox.test", tip.length = 0.01, size = 3))
+dev.off()
+```
+
+
+
+Correlation of gene expression to cn-HPC composition.
+```{r}
+corr_results_pankplus_primary <- data.frame()
+for (hpc in unique(tilecomp.df.primary$Cluster)){
+
+  hpc.corr <- wta_counts.pankplus.norm %>% remove_rownames %>% column_to_rownames(var="Group.1")
+
+  hpc.corr_combined <- hpc.corr %>%
+  group_by(Case.1510.ID..) %>%
+  summarise_at(vars(names(hpc.corr)[names(hpc.corr) != "Case.1510.ID.."]), list(name = mean))
+names(hpc.corr_combined) <- str_replace_all(names(hpc.corr_combined), "_name", "")
+
+  hpc.corr_combined <- as.data.frame(t(hpc.corr_combined))
+  patient_ids <- hpc.corr_combined["Case.1510.ID..",]
+  hpc.corr_combined <- hpc.corr_combined[-which(rownames(hpc.corr_combined) %in% c("Case.1510.ID..", "FullID")),]
+  names(hpc.corr_combined) <- patient_ids
+
+  patient_ids_filtered <- intersect(data.frame(Patient = matrix(t(patient_ids))), data.frame(Patient = tilecomp.df.primary$Patient))
+
+  tilecomp.df.primary.hpc <- tilecomp.df.primary[(tilecomp.df.primary$Cluster == hpc) & (tilecomp.df.primary$Patient %in% patient_ids_filtered$Patient),]
+  tilecomp.df.primary.hpc <- tilecomp.df.primary.hpc[match(patient_ids_filtered$Patient, tilecomp.df.primary.hpc$Patient),]
+
+  hpc.corr_combined <- as.data.frame(t(hpc.corr_combined))[match(patient_ids_filtered$Patient, names(hpc.corr_combined)),]
+
+  for (gene in names(hpc.corr_combined)){
+    # Correlation
+    corr_hpc <- cor.test(as.numeric(tilecomp.df.primary.hpc$TileComposition), as.numeric(hpc.corr_combined[,gene]),method = "pearson")
+    corr_results_pankplus_primary <- rbind(corr_results_pankplus_primary, data.frame(HPC = hpc, gene = gene, corr = corr_hpc$estimate, pval = corr_hpc$p.value, group = "Pank+"))
+  }
+}
+corr_results_pankplus_primary$HPC <- factor(paste0("cn-HPC",corr_results_pankplus_primary$HPC))
+corr_results_pankplus_primary$p.adjust <- p.adjust(corr_results_pankplus_primary$pval, method = "BH")
+corr_results_pankplus_primary.toplot <- corr_results_pankplus_primary[corr_results_pankplus_primary$p.adjust <= 0.5,]
+corr_results_pankplus_primary.toplot$gene <- factor(corr_results_pankplus_primary.toplot$gene)
+# png(filename=paste0(output_subset_dir, "wta_pankplus.png"), res = 100, units = "in", width = 5, height = 5)
+ggplot(corr_results_pankplus_primary.toplot, aes(x=HPC, y=gene, size = p.adjust, color = corr)) +
+  geom_point(aes(size=p.adjust)) +
+  scale_size(trans = 'reverse') +
+  scale_colour_gradient2(low = "blue",
+  mid = "white",
+  high = "red") + theme_bw()
+# dev.off()
+```
+
+Gene set enrichmnent analysis using genes positively correlated to cn-HPC23
+
+```{r}
+# cn-HPC 23
+positive_correlated_genes <- corr_results_pankplus_primary$gene[(corr_results_pankplus_primary$corr > 0) & (corr_results_pankplus_primary$pval < 0.05) & (corr_results_pankplus_primary$HPC == "cn-HPC23")]
+
+# Gene set enrichment analysis Analysis
+entrez_ids <- mapIds(org.Hs.eg.db,
+                     keys = positive_correlated_genes,
+                     column = "ENTREZID",
+                     keytype = "SYMBOL",
+                     multiVals = "first")
+
+hallmark_genes <- msigdbr(species = "Homo sapiens", category = "H")
+hallmark_gene_sets <- hallmark_genes %>%
+  dplyr::select(gs_name, entrez_gene) 
+hallmark_gene_sets$gs_name <- str_replace_all(hallmark_gene_sets$gs_name, "HALLMARK_", "")
+
+enrich_result <- enricher(gene = entrez_ids,
+                          TERM2GENE = hallmark_gene_sets,
+                          pvalueCutoff = 0.5)
+
+png(filename=glue("{output_parent_dir}wta_pankplus_positiveHPC23.png"), res = 100, units = "in", width = 10, height = 5)
+barplot(enrich_result)
+dev.off()
+```

@@ -1,0 +1,298 @@
+---
+title: "cn-HPC validation in external cohort"
+output: html_notebook
+---
+
+```{r}
+# Import libraries
+suppressPackageStartupMessages({
+    library(openxlsx)
+    library(ggplot2)
+    library(ggpubr)
+    library(broom)
+    library(plyr)
+    library(uwot)
+    library(stringr)
+    library(rhdf5)
+    library(RColorBrewer)
+    library(ggrepel)
+    library(scran)
+    library(rjson)
+    library(class)
+    library(reshape2)
+    library(varhandle)
+    library(dplyr)
+  library(gtools)
+  library(glue)
+})
+```
+
+Load cluster CSV with UMAP.
+```{r}
+output_parent_dir <- "/gpfs/scratch/leh06/NivoPembro_Results/Figures_240516/"
+if (!file.exists(output_parent_dir)){
+    dir.create(output_parent_dir)
+}
+# Load the TCGA-LUAD UMAP
+load(glue("{output_parent_dir}analysis_data.RData"))
+```
+
+Load cluster csv output by HPL pipeline for the external cohort.
+```{r}
+cluster_csv_immuno <- read.csv("/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/results/BarlowTwins_3/tcga_luad_cell_224px_20x/h224_w224_n3_zdim128/survival/adatas/nyuimmuno_cell_224px_20x_luad_he_complete_metadata_leiden_1p0__fold1.csv")
+
+clin_info_immuno <- read.csv("/gpfs/data/tsirigoslab/home/leh06/PathGAN/clinical_data/nivo_pembro_clinical_041724.csv")
+clin_info_immuno$samples <- clin_info_immuno$Case.1510.ID..
+clin_info_immuno$slides <- clin_info_immuno$ScanID
+
+h5_data_immuno <- h5read(file = "/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/results/BarlowTwins_3/nyuimmuno_cell_224px_20x_luad/h224_w224_n3_zdim128/hdf5_nyuimmuno_cell_224px_20x_luad_he_complete_metadata.h5", name = "/")
+
+latent_projs_immuno <- h5_data_immuno$img_z_latent
+latent_projs_immuno <- t(latent_projs_immuno)
+print(dim(latent_projs_immuno))
+
+h5_clin_immuno <- data.frame(slides = as.integer(h5_data_immuno$slides), 
+                             tiles = h5_data_immuno$tiles, 
+                             metastaticsite = h5_data_immuno$metastaticsite,
+                             befafttr = h5_data_immuno$befafttr)
+```
+
+Load csv file with centroids and cell types.
+```{r}
+centroid_df_immuno <- read.csv("/gpfs/data/tsirigoslab/home/leh06/Rscripts/centroid_df_224px_20x_immuno_full_info.csv")
+centroid_df_immuno$slides <- as.integer(centroid_df_immuno$slides)
+centroid_df_immuno <- left_join(h5_clin_immuno, centroid_df_immuno, by = c("slides","tiles"))
+
+indexes_primary <- c(1:nrow(h5_clin_immuno))[(h5_clin_immuno$metastaticsite %in% c("LUNG", "PLEURA")) & (h5_clin_immuno$befafttr == "Before")]
+indexes_metastatic <- c(1:nrow(h5_clin_immuno))[(!h5_clin_immuno$metastaticsite %in% c("LUNG", "PLEURA")) & (h5_clin_immuno$befafttr == "Before")]
+indexes_full <- c(1:nrow(h5_clin_immuno))[(h5_clin_immuno$befafttr == "Before")]
+```
+
+
+
+
+Plot UMAP from the TCGA-LUAD UMAP.
+
+```{r}
+umap_nyuimmuno_primary <- uwot::umap_transform(latent_projs_immuno[indexes_primary,], umap_tcga, verbose = TRUE)
+umap_nyuimmuno_primary_df <- data.frame(x = umap_nyuimmuno_primary[,1], 
+                           y = umap_nyuimmuno_primary[,2])
+png(file = glue("{output_parent_dir}umap_nyuimmuno_primary.png"), width = 10, height = 10, unit = "in", res = 200)
+print(ggplot(umap_nyuimmuno_primary_df, aes(x=x, y = y)) + 
+        geom_point(alpha = 0.05,size = 0.5)+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_blank(), axis.text.x = element_blank(),
+axis.title = element_blank(),
+axis.text.y = element_blank(),
+  axis.ticks = element_blank(),
+legend.position = "none")+
+  labs(x = "UMAP1",
+       y = "UMAP2"))
+dev.off()
+```
+
+Visualization: Plot UMAP with cn-HPCs. 
+```{r}
+umap_kmeans_immuno_primary_df <- left_join(h5_clin_immuno[indexes_primary,], cluster_csv_immuno, by = c("slides", "tiles"))
+umap_kmeans_immuno_primary_df <- cbind(umap_kmeans_immuno_primary_df, umap_nyuimmuno_primary_df)
+umap_kmeans_immuno_primary_df <- left_join(umap_kmeans_immuno_primary_df, centroid_df_immuno, by = c("slides", "tiles"))
+umap_kmeans_immuno_primary_df$samples <- left_join(umap_kmeans_immuno_primary_df, clin_info_immuno, by = "slides")$samples.y
+for (i in celltypes$type){
+  label <- celltypes$labels[celltypes$type == i]
+  umap_kmeans_immuno_primary_df$CellType <- str_replace_all(as.character(umap_kmeans_immuno_primary_df$CellType), as.character(i), label)
+}
+umap_kmeans_immuno_primary_df$CellType <- factor(umap_kmeans_immuno_primary_df$CellType)
+umap_kmeans_immuno_primary_df$cluster <- umap_kmeans_immuno_primary_df[,grep("leiden",names(umap_kmeans_immuno_primary_df))]
+
+umap_kmeans_immuno_primary_df <- umap_kmeans_immuno_primary_df[!is.na(umap_kmeans_immuno_primary_df$cluster),]
+umap_kmeans_immuno_primary_df$cluster <- factor(umap_kmeans_immuno_primary_df$cluster)
+
+label.df <- data.frame(cluster=levels(umap_kmeans_immuno_primary_df$cluster),label=levels(umap_kmeans_immuno_primary_df$cluster))
+label.df_2 <- umap_kmeans_immuno_primary_df %>%
+  group_by(cluster) %>%
+  summarize(x = mean(x), y = mean(y)) %>%
+  left_join(label.df)
+
+
+png(file = glue("{output_parent_dir}umap_clusters_nyu_primary.png"), width = 10, height = 10, unit = "in", res = 200)
+print(ggplot(umap_kmeans_immuno_primary_df, aes(x=x, y = y, color = cluster)) + geom_point(size = 0.5, alpha = 0.05)+
+        scale_color_manual(values = custom_palette)+
+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.text.x = element_blank(),
+axis.text.y = element_blank(),
+axis.ticks = element_blank(),
+axis.line=element_blank(), axis.title = element_blank(),
+legend.position = "none")+
+labs(x = "UMAP1",
+     y = "UMAP2",
+     color = "Cluster") +ggrepel::geom_label_repel(data = label.df_2,aes(label = label), size = 5, alpha = 1))
+dev.off()
+```
+
+Create cell compositions (histogram): for each cluster a bar, and each bar contains colors.
+```{r}
+cbbPalette <- c("lightgrey", "#CC79A7", "#F0E442", "#000000", "#009E73","#0072B2")
+# All cells
+df <- melt(umap_kmeans_immuno_primary_df[,c("cluster","others",  "connective", "inflammatory", "necrosis", "non_neoplastic","neoplastic")],id = "cluster")
+df$cluster <- paste0("cn-HPC",factor(df[,"cluster"]))
+df_tiles <- melt(table(umap_kmeans_immuno_primary_df[,c("cluster","CellType")]))
+df_tiles$cluster <- paste0("C",factor(df_tiles[,"cluster"]))
+brks <- c(0.0, 0.25, 0.50, 0.75, 1.0)
+
+df <- df %>%
+summarize(total = sum(value),
+          .by =c(cluster,variable))
+
+df$total[is.na(df$total)] <- 0
+
+totals_tiles <- df_tiles %>%
+group_by(cluster) %>%
+summarize(total_tiles = sum(value))
+
+totals <- df %>%
+summarize(total = sum(total),
+          .by =c(cluster))
+
+totals <- totals %>%
+  left_join(totals_tiles,
+            by = "cluster")
+
+ordered_clusters <- df[df$variable == "neoplastic",c("cluster", "total")]
+totals <- totals[match(ordered_clusters$cluster, totals$cluster),]
+ordered_clusters$total <- ordered_clusters$total/totals$total*100
+ordered_clusters <- ordered_clusters$cluster[order(ordered_clusters$total, decreasing = T)]
+
+df$cluster <- factor(df$cluster, levels = ordered_clusters)
+totals$cluster <- factor(totals$cluster, levels = ordered_clusters)
+
+df$variable <- factor(df$variable, levels = c("others",  "connective", "inflammatory", "necrosis",  "non_neoplastic", "neoplastic"))
+
+png(file = glue("{output_parent_dir}cluster_cell_composition_immuno_primary.png"), width = 30, height = 10, units = 'in', res = 200)
+print(ggplot(df, aes(fill=variable, y=total, x=cluster)) +
+        scale_fill_manual(values=cbbPalette) +  
+  geom_bar(position="fill", stat="identity") + 
+  geom_text(aes(cluster, -0.03 , label = paste0("n=", total), fill = NULL), data = totals,  size=3.5) +
+    theme_bw() +
+theme(axis.title.y = element_blank(), axis.title.x = element_blank(),
+      axis.ticks.y = element_blank(), legend.title = element_blank(),
+      text = element_text(size = 40), axis.text.x = element_text(angle = 90,size = 40)) +
+labs(y = "Distribution of all cell types in tiles (%)", fill = "Cell types") +
+scale_y_continuous(labels = scales::percent)) 
+dev.off()
+```
+
+Wilcoxon analysis of clusters with Best Overall response
+```{r}
+# Prepare clinical information for NYU-Immuno.
+tilecomp.df.bor.primary <- data.frame(matrix(nrow = 0, ncol = 4, dimnames = list(NULL, c("Cluster", "Patient", "TileComposition", "Category"))))
+resptest.bor.df <- data.frame(matrix(nrow = 0, ncol = 4, dimnames = list(NULL, c("Cluster", "pvalue", "resp_Median", "prog_Median"))))
+ 
+labels_full <- umap_kmeans_immuno_primary_df[,c("slides", "tiles", "samples", "outcome_label", "cluster")]
+labels_full$bor <- left_join(labels_full, unique(clin_info_immuno[,c("samples","BOR")]), by = "samples")$BOR
+
+categories <- c("response", "progression")
+
+nb_tile_patients <- data.frame(table(labels_full$samples))
+names(nb_tile_patients) <- c("samples", "total_nb_tiles")
+nb_tile_patients <- join(nb_tile_patients, labels_full, by = "samples", type = "left", match = "first")[,c("samples","total_nb_tiles", "bor")]
+
+for (c in unique(labels_full$cluster)){
+  # responders
+  count_df_resp <- table(labels_full[labels_full$cluster == c & labels_full$bor == "response", c("samples", "bor")])
+  nb_tile_patients_resp <- nb_tile_patients[nb_tile_patients$bor == "response",]
+  if (nrow(count_df_resp)>0){
+    count_df_resp <- data.frame(count_df_resp)
+    count_df_resp <- join(count_df_resp, nb_tile_patients_resp, by = c("samples", "bor"), type = "left", match = "first")
+    count_df_resp$tile_composition <- count_df_resp$Freq/count_df_resp$total_nb_tiles*100
+    count_df_resp <- rbind(count_df_resp, data.frame(samples = nb_tile_patients_resp$samples[! nb_tile_patients_resp$samples %in% count_df_resp$samples], bor = rep("response", nrow(nb_tile_patients_resp) - nrow(count_df_resp)), Freq = rep(0, nrow(nb_tile_patients_resp) - nrow(count_df_resp)), total_nb_tiles = nb_tile_patients_resp$total_nb_tiles[!nb_tile_patients_resp$samples %in% count_df_resp$samples], tile_composition = rep(0, nrow(nb_tile_patients_resp) - nrow(count_df_resp))))
+  } else {
+    count_df_resp <- data.frame(samples = nb_tile_patients_resp$samples, bor = rep("response", nrow(nb_tile_patients_resp)), Freq = rep(0, nrow(nb_tile_patients_resp)), total_nb_tiles = nb_tile_patients_resp$total_nb_tiles, tile_composition = rep(0, nrow(nb_tile_patients_resp)))
+  }
+
+  # non-responders
+  count_df_prog <- table(labels_full[labels_full$cluster == c & labels_full$bor == "progression", c("samples", "bor")])
+  nb_tile_patients_prog <- nb_tile_patients[nb_tile_patients$bor == "progression",]
+  if (nrow(count_df_prog)>0){
+    count_df_prog <- data.frame(count_df_prog)
+    count_df_prog <- join(count_df_prog, nb_tile_patients_prog, by = c("samples", "bor"), type = "left", match = "first")
+    count_df_prog$tile_composition <- count_df_prog$Freq/count_df_prog$total_nb_tiles*100
+    count_df_prog <- rbind(count_df_prog, data.frame(samples = nb_tile_patients_prog$samples[! nb_tile_patients_prog$samples %in% count_df_prog$samples], bor = rep("progression", nrow(nb_tile_patients_prog) - nrow(count_df_prog)), Freq = rep(0, nrow(nb_tile_patients_prog) - nrow(count_df_prog)), total_nb_tiles = nb_tile_patients_prog$total_nb_tiles[! nb_tile_patients_prog$samples %in% count_df_prog$samples], tile_composition = rep(0, nrow(nb_tile_patients_prog) - nrow(count_df_prog))))
+  } else {
+    count_df_prog <- data.frame(samples = nb_tile_patients_prog$samples, bor = rep("progression", nrow(nb_tile_patients_prog)), Freq = rep(0, nrow(nb_tile_patients_prog)), total_nb_tiles = nb_tile_patients_prog$total_nb_tiles, tile_composition = rep(0, nrow(nb_tile_patients_prog)))
+  }
+  # wilcoxon
+  wilcox <- wilcox.test(count_df_resp$tile_composition, count_df_prog$tile_composition, exact = FALSE)
+
+  # Add tile compositions to dataframe
+  tilecomp.df.bor.primary <- rbind(tilecomp.df.bor.primary, data.frame(Cluster = rep(c, nrow(count_df_resp)), Patient = count_df_resp$samples, TileComposition = count_df_resp$tile_composition, Category = count_df_resp$bor))
+  tilecomp.df.bor.primary <- rbind(tilecomp.df.bor.primary, data.frame(Cluster = rep(c, nrow(count_df_prog)), Patient = count_df_prog$samples, TileComposition = count_df_prog$tile_composition, Category = count_df_prog$bor))
+
+
+ # Add pvalues to dataframe
+  resptest.bor.df <- rbind(resptest.bor.df, data.frame(Cluster = paste0("cn-HPC", c),
+                                               pvalue = wilcox$p.value,
+                                               resp_Median = median(count_df_resp$tile_composition),
+                                               prog_Median = median(count_df_prog$tile_composition)))
+}
+
+# Boxplots
+barplot.df <- data.frame(matrix(nrow = 0, ncol = 3, dimnames = list(NULL, c("Cluster", "Percentage", "Group"))))
+
+resp_samples <- unique(labels_full$samples[labels_full$bor == "response"])
+
+prog_samples <- unique(labels_full$samples[labels_full$bor == "progression"])
+
+for (c in unique(labels_full$cluster)){
+
+  # responders
+  value_resp <- length(tilecomp.df.bor.primary$Patient[(tilecomp.df.bor.primary$Cluster == c) & (tilecomp.df.bor.primary$TileComposition > 0) &
+                                             (tilecomp.df.bor.primary$Patient %in% resp_samples)])
+  percent_resp <- value_resp/length(resp_samples)*100
+  barplot.df <- rbind(barplot.df, data.frame(Cluster = c, Percentage = percent_resp, Group = "resp", Value = paste0("n=",value_resp)))
+
+  value_prg <- length(tilecomp.df.bor.primary$Patient[(tilecomp.df.bor.primary$Cluster == c) & (tilecomp.df.bor.primary$TileComposition > 0) &
+                                             (tilecomp.df.bor.primary$Patient %in% prog_samples)])
+  percent_prg <- value_prg/length(prog_samples)*100
+  barplot.df <- rbind(barplot.df, data.frame(Cluster = c, Percentage = percent_prg, Group = "prog", Value = paste0("n=",value_prg)))
+}
+
+boxplot.df <- tilecomp.df.bor.primary
+give.n <- function(x){
+return(c(y = -8, label = length(x[x>0])))
+}
+boxplot.df$Cluster <- factor(paste0("cn-HPC", boxplot.df$Cluster), levels = paste0("cn-HPC",sort(as.integer(unique(boxplot.df$Cluster)))))
+
+png(filename=glue("{output_parent_dir}boxplot_immuno_primary_bor.png"), res = 200, units = "in", width = 40, height = 5)
+print(ggplot(boxplot.df,
+     aes(x = Category,
+         y = TileComposition,
+         fill = Category)) + geom_boxplot() +
+geom_jitter(shape=1, position=position_jitter(0.2)) +
+scale_fill_manual(values=c("#00BFC4","#F8766D"))+ ylim(-10,100)+ ylab("Tile Percentage")+
+facet_grid(. ~ Cluster) + theme_bw() + theme(legend.position = "none", axis.text.x = element_text(angle = 90), axis.title.x = element_blank(), text = element_text(size=30)) + stat_summary(fun.data = give.n, geom = "text", size = 5)+ stat_compare_means( aes(label = ..p.signif..), 
+                      label.x = 1.5, label.y = 90, size = 10))
+dev.off()
+
+
+png(filename=glue("{output_parent_dir}boxplot_immuno_primary_bor_cnhpc23.png"), res = 200, units = "in", width = 5, height = 7)
+print(ggplot(boxplot.df_2[boxplot.df_2$Cluster == "cn-HPC23",],
+     aes(x = Category,
+         y = TileComposition,
+         fill = Category)) + geom_boxplot() +
+geom_jitter(shape=1, position=position_jitter(0.2)) +
+scale_fill_manual(values=c("#00BFC4","#F8766D"))+ ylim(0,70)+ ylab("Tile Percentage")+
+facet_grid(~Cluster) + theme_bw() + theme(legend.position = "none", axis.text.x = element_text(angle = 90), axis.title.x = element_blank(), text = element_text(size=30)) + stat_compare_means( aes(label = ..p.signif..), 
+                      label.x = 1.5, label.y = 65, size = 10)+ stat_compare_means(label = "p.format", method = "wilcox.test", tip.length = 0.01, size = 10,label.y = 60, label.x = 1.2))
+dev.off()
+```
+
+
+PRIMARY SUBSET - mHPC23: AUC depending on rank
+```{r}
+df <- tilecomp.df.bor.primary[tilecomp.df.bor.primary$Cluster == "23",]
+ranks <- rank(df$TileComposition)
+png(filename=glue("{output_parent_dir}HPC_23_auc_nyu_primary.png"), res = 200, units = "in", width = 10, height = 10)
+plot(roc(df$Category, ranks), print.auc = TRUE)
+dev.off()
+```
+

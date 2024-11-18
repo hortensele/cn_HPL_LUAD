@@ -14,6 +14,8 @@ import random
 ##### Main #######
 parser = argparse.ArgumentParser(description='Sort tiles according to cell types')
 parser.add_argument('--output_dir', dest='output_dir', type = str, default = None, help = "Output directory.")
+parser.add_argument('--results_dir', dest='results_dir', type=str, default=None, help='Parent directory where all Hover-Net results are stored.')
+parser.add_argument('--svs_path', dest='svs_path', type=str, default=None, help='Folder where all svs files are stored.')
 parser.add_argument('--window_size', dest='window_size', type = int, default = 224, help = "Size of tiles at 20x.")
 parser.add_argument('--perc_train', dest='perc_train', type = float, default = 0.8, help = "Ratio of patients to belong to train set.")
 parser.add_argument('--nb_tiles_train', dest='nb_tiles_train', type = int, default = None, help = "Number of tiles for train set.")
@@ -23,6 +25,8 @@ parser.add_argument('--nb_tiles_test', dest='nb_tiles_test', type = int, default
 
 args					= parser.parse_args()
 output_dir				= args.output_dir
+results_dir				= args.results_dir
+svs_path				= args.svs_path
 window_size				= args.window_size
 perc_train				= args.perc_train
 nb_tiles_train			= args.nb_tiles_train
@@ -31,15 +35,13 @@ nb_tiles_test			= args.nb_tiles_test
 
 if not os.path.exists(output_dir):
     os.makedirs(output_dir)
-    
-
-results_dir = "/gpfs/data/tsirigoslab/home/leh06/HoverNet/hover_net/01_results/tcga_luad_240323/004_Van_NYUape_pannuke_type/224px_tcga_luad_0.504umpx/"
 
 csv_paths = glob(os.path.join(results_dir,"*_files","cell_summary", "*.csv"))
 
-# Add threshold of cells to to load from csvs since OOM error
+# Add threshold of cells to to load from csvs in case of memory issue
 target_sample_size = 100000
 
+# Load all Hover-Net cell results stored in CSVs and separate into cell type dataframes
 neoplastic_df = pd.DataFrame()
 inflammatory_df = pd.DataFrame()
 connective_df = pd.DataFrame()
@@ -81,13 +83,14 @@ for i in tqdm(csv_paths, desc="Processing csvs"):
 # Combine them into a single list for easier iteration
 all_cells_df = [neoplastic_df, inflammatory_df, connective_df, necrosis_df, non_neoplastic_df]
 
-# Train samples and valid samples
+# Generate train samples and valid samples sets
 samples_from_csv = np.unique([os.path.basename(i)[:12] for i in csv_paths])
 random.Random(4).shuffle(samples_from_csv)
 train_samples = samples_from_csv[:int(perc_train*len(samples_from_csv))]
 valid_samples = samples_from_csv[int(perc_train*len(samples_from_csv)):]
 
 def sample_tiles_subset(subset, samples, all_cells_df, nb_tiles, tiles_to_remove):
+    ''' This function randomly samples tiles from each cell type for the given samples.'''
     # Initialize an empty list to store sampled tiles
     sampled_tiles = []
 
@@ -132,6 +135,7 @@ def sample_tiles_subset(subset, samples, all_cells_df, nb_tiles, tiles_to_remove
     final_sampled_tiles["subset"] = subset
     return final_sampled_tiles
 
+# Tile samples for each set
 tiles_to_remove = pd.DataFrame()
 train_sampled_tiles = sample_tiles_subset("train", train_samples, all_cells_df, nb_tiles_train, tiles_to_remove)
 valid_sampled_tiles = sample_tiles_subset("valid", valid_samples, all_cells_df, nb_tiles_valid, tiles_to_remove)
@@ -144,20 +148,20 @@ test_sampled_tiles = sample_tiles_subset("test", samples_from_csv, all_cells_df,
 final_sampled_tiles = pd.concat([tiles_to_remove, test_sampled_tiles], axis=0)
 final_sampled_tiles.reset_index(drop=True, inplace=True)
 
+# Save all the sampled tiles into one CSV with all the cell information
 final_sampled_tiles.to_csv(os.path.join(results_dir, "tiles_used_for_ssl_information.csv"), index = False)
 
 print("Sampling done, start tiling")
 
-# Tiling step
-svs_path = "/gpfs/data/abl/ABL-public-TCGA-Pathology/diagnostic_lung/svs_All/svs_LUAD"
-svs_lists = glob(os.path.join(svs_path,"*","*.svs"))
 
 
 def convert_mags(coords_20x, final_mag):
+    ''' This function converts coordinates at 20x to 40x (original magnification of the whole slide images).'''
     final_coords = coords_20x*(447/224*0.2525)/final_mag
     return int(final_coords)
 
 def normalize_tile(tile, NormVec):
+    ''' This function performs stain normalization for each tile.'''
     NormVec = [float(x) for x in NormVec.split(',')]
     Lab = RGB_to_lab(tile)
     TileMean = [0,0,0]
@@ -189,6 +193,8 @@ def Lab_to_RGB(Lab):
 
 Normalize = '57,22,-8,20,10,5'
 
+# Tiling step: this will output tiles centered around cells detected by Hover-Net.
+svs_lists = glob(os.path.join(svs_path,"*.svs"))
 for slide_name in tqdm(final_sampled_tiles["slide"].unique(), desc="Processing slides"):
     final_sampled_tiles_sub = final_sampled_tiles.loc[final_sampled_tiles.slide == slide_name,:]
     slide_path = [i for i in svs_lists if os.path.splitext(os.path.basename(i))[0] == slide_name][0]

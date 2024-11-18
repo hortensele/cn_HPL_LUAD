@@ -1,0 +1,470 @@
+---
+title: "cn-HPC complete analysis in TCGA-LUAD"
+output: html_notebook
+---
+
+```{r}
+# Import libraries
+suppressPackageStartupMessages({
+    library(openxlsx)
+    library(ggplot2)
+    library(ggpubr)
+    library(broom)
+    library(plyr)
+    library(uwot)
+    library(stringr)
+    library(rhdf5)
+    
+    library(RColorBrewer)
+    library(ggrepel)
+    library(scran)
+    library(rjson)
+    library(class)
+    library(reshape2)
+    library(varhandle)
+    library(dplyr)
+    library(circlize)
+    library(gtools)
+    library(glue)
+})
+```
+
+Load cluster CSV with UMAP.
+```{r}
+output_parent_dir <- "/gpfs/scratch/leh06/NivoPembro_Results/Figures_240516/"
+if (!file.exists(output_parent_dir)){
+    dir.create(output_parent_dir)
+}
+# load(glue("{output_parent_dir}analysis_data.RData"))
+```
+
+Compute the number of TCGA-LUAD slides and samples
+```{r}
+slide_path <- "/gpfs/data/abl/ABL-public-TCGA-Pathology/diagnostic_lung/svs_All/svs_LUAD/"
+slide_names <- basename(list.files(slide_path,pattern = "svs$", recursive = TRUE))
+nb_slides <- length(slide_names)
+sample_names <- unique(str_sub(slide_names, start = 1L, end = 12L))
+nb_samples <- length(sample_names)
+print(glue("Number of TCGA slides in study: {nb_slides}"))
+print(glue("Number of TCGA samples in study: {nb_samples}"))
+```
+
+Load cluster csv output by HPL pipeline.
+```{r}
+cluster_csv_tcga <- read.csv("/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/results/BarlowTwins_3/tcga_luad_cell_224px_20x/h224_w224_n3_zdim128/survival/adatas/tcga_luad_cell_224px_20x_he_complete_lungsubtype_survival_leiden_1p0__fold1.csv")
+cluster_csv_tcga_test <- read.csv("/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/results/BarlowTwins_3/tcga_luad_cell_224px_20x/h224_w224_n3_zdim128/survival/adatas/tcga_luad_cell_224px_20x_he_complete_lungsubtype_survival_leiden_1p0__fold1_test.csv")
+cluster_csv_tcga <- rbind(cluster_csv_tcga, cluster_csv_tcga_test)
+```
+
+Load csv file with centroids and cell types.
+```{r}
+celltypes <- data.frame(type = c(0, 1, 2, 3, 4, 5),
+labels = c("others", "neoplastic", "inflammatory", "connective", "necrosis", "non_neoplastic"))
+centroid_df <- read.csv("/gpfs/scratch/leh06/hovernet/01_results/tcga_luad_240323/004_Van_NYUape_pannuke_type/224px_tcga_luad_0.504umpx/tiles_used_for_ssl_information.csv")
+```
+
+Load tile embeddings stored in h5 file.
+```{r}
+h5_data <- h5read(file = "/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/results/BarlowTwins_3/tcga_luad_cell_224px_20x/h224_w224_n3_zdim128/hdf5_tcga_luad_cell_224px_20x_he_complete_lungsubtype_survival.h5", name = "/")
+
+latent_projs <- h5_data$img_z_latent
+latent_projs <- t(latent_projs)
+print(dim(latent_projs))
+
+h5_clin <- data.frame(slides = h5_data$slides, tiles = h5_data$tiles)
+# head(h5_clin)
+
+# Make sure centroid_df matches the order of the h5 file.
+centroid_df$full_id <- paste(centroid_df$CellID, centroid_df$slide, sep = "_")
+h5_clin$full_id <- paste(h5_clin$tiles, h5_clin$slides, sep = "_")
+
+centroid_df <- centroid_df[match(h5_clin$full_id, centroid_df$full_id), ]
+```
+
+Visualization: Plot UMAP.
+```{r}
+umap_tcga <- uwot::umap(latent_projs, verbose = TRUE, ret_model = TRUE)
+
+umap_tcga_df <- data.frame(x = umap_tcga$embedding[,1], 
+                           y = umap_tcga$embedding[,2])
+png(file = glue("{output_parent_dir}umap_original.png"), width = 10, height = 10, unit = "in", res = 200)
+print(ggplot(umap_tcga_df, aes(x=x, y = y)) + 
+        geom_point(alpha = 0.05,size = 0.5)+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.line = element_blank(), axis.text.x = element_blank(),
+axis.title = element_blank(),
+axis.text.y = element_blank(),
+  axis.ticks = element_blank(),
+legend.position = "none")+
+  labs(x = "UMAP1",
+       y = "UMAP2"))
+dev.off()
+# Save the UMAP to a RData file.
+# save.image(glue("{output_parent_dir}analysis_data.RData"))
+```
+
+Visualization: Plot UMAP with all cell types.
+```{r}
+plot_df <- data.frame(x = umap_tcga$embedding[,1], 
+                           y = umap_tcga$embedding[,2],
+                      CellType = centroid_df$CellType)
+for (i in unique(celltypes$type)){
+  plot_df$CellType[plot_df$CellType == i] <- celltypes$labels[celltypes$type == i]
+}
+plot_df$CellType <- factor(plot_df$CellType)
+plot_df <- plot_df[!is.na(plot_df$CellType),]
+
+cbbPalette <- c("#CC79A7", "#F0E442", "#000000", "#0072B2", "#009E73", "lightgrey")
+
+png(file = glue("{output_parent_dir}celltype_color.png"), width = 12, height = 10, unit = "in", res = 200)
+print(ggplot(plot_df, aes(x=x, y = y, color = CellType)) + geom_point(size = 0.5, alpha = 0.05)+
+        scale_colour_manual(values=cbbPalette) + 
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.text.x = element_blank(),
+  axis.text.y = element_blank(),
+  axis.ticks = element_blank(),
+axis.line=element_blank(), axis.title = element_blank())+
+  labs(x = "UMAP1",
+       y = "UMAP2",
+       color = "Cell Type") +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1))))
+dev.off()
+```
+
+Visualization: Plot UMAP with each individual cell type.
+```{r}
+for (i in unique(plot_df$CellType)){
+  plot_df_celltype <- plot_df
+  plot_df_celltype$CellType[plot_df$CellType != i] <- NA
+  png(file = glue("{output_parent_dir}umap_celltype_", i,".png"), width = 12, height = 10, unit = "in", res = 200)
+  print(ggplot(plot_df_celltype, aes(x=x, y = y, color = CellType)) + geom_point(size = 0.5, alpha = 0.05)+
+          scale_colour_discrete(na.value="grey90")+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.text.x = element_blank(),
+  axis.text.y = element_blank(),
+  axis.ticks = element_blank(),
+axis.line=element_blank(), axis.title = element_blank())+
+  labs(x = "UMAP1",
+       y = "UMAP2",
+       color = "Cell Type") +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1))))
+  dev.off()
+}
+```
+
+
+Visualization: Plot UMAP with cn-HPCs. 
+```{r}
+umap_kmeans_df <- left_join(h5_clin, cluster_csv_tcga, by = c("slides", "tiles"))
+umap_kmeans_df <- cbind(umap_kmeans_df, umap_tcga_df)
+umap_kmeans_df <- left_join(umap_kmeans_df, centroid_df, by = c("slides", "tiles"))
+for (i in celltypes$type){
+  label <- celltypes$labels[celltypes$type == i]
+  umap_kmeans_df$CellType <- str_replace_all(as.character(umap_kmeans_df$CellType), as.character(i), label)
+}
+umap_kmeans_df$CellType <- factor(umap_kmeans_df$CellType)
+umap_kmeans_df$cluster <- umap_kmeans_df[,grep("leiden",names(umap_kmeans_df))]
+
+umap_kmeans_df <- umap_kmeans_df[!is.na(umap_kmeans_df$cluster),]
+umap_kmeans_df$cluster <- factor(umap_kmeans_df$cluster)
+
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+custom_palette = sample(unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals))), length(unique(umap_kmeans_df$cluster)))
+
+label.df <- data.frame(cluster=levels(umap_kmeans_df$cluster),label=levels(umap_kmeans_df$cluster))
+label.df_2 <- umap_kmeans_df %>%
+  group_by(cluster) %>%
+  summarize(x = mean(x), y = mean(y)) %>%
+  left_join(label.df)
+
+png(file = glue("{output_parent_dir}umap_clusters.png"), width = 10, height = 10, unit = "in", res = 200)
+print(ggplot(umap_kmeans_df, aes(x=x, y = y, color = cluster)) + geom_point(size = 0.5, alpha = 0.05)+
+        scale_color_manual(values = custom_palette)+
+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+panel.background = element_blank(), axis.text.x = element_blank(),
+axis.text.y = element_blank(),
+axis.ticks = element_blank(),
+axis.line=element_blank(), axis.title = element_blank(), legend.position = "none")+
+labs(x = "UMAP1",
+     y = "UMAP2",
+     color = "Cluster") +ggrepel::geom_label_repel(data = label.df_2,aes(label = label), size = 10, alpha = 1))
+dev.off()
+```
+
+Create cell compositions (histogram): for each cluster a bar, and each bar contains colors. 
+```{r}
+cbbPalette <- c("lightgrey", "#CC79A7", "#F0E442", "#000000", "#009E73","#0072B2")
+# REMOVE NA ROWS
+umap_kmeans_df <- umap_kmeans_df[!is.na(umap_kmeans_df$CellID),]
+# All cells
+df <- melt(umap_kmeans_df[,c("cluster","others",  "connective", "inflammatory", "necrosis", "non_neoplastic","neoplastic")],id = "cluster")
+df$cluster <- paste0("cn-HPC",factor(df[,"cluster"]))
+df_tiles <- melt(table(umap_kmeans_df[,c("cluster","CellType")]))
+df_tiles$cluster <- paste0("C",factor(df_tiles[,"cluster"]))
+brks <- c(0.0, 0.25, 0.50, 0.75, 1.0)
+
+df <- df %>%
+summarize(total = sum(value),
+          .by =c(cluster,variable))
+
+df$total[is.na(df$total)] <- 0
+
+totals_tiles <- df_tiles %>%
+group_by(cluster) %>%
+summarize(total_tiles = sum(value))
+
+totals <- df %>%
+summarize(total = sum(total),
+          .by =c(cluster))
+
+totals <- totals %>%
+  left_join(totals_tiles,
+            by = "cluster")
+
+ordered_clusters <- df[df$variable == "neoplastic",c("cluster", "total")]
+totals <- totals[match(ordered_clusters$cluster, totals$cluster),]
+ordered_clusters$total <- ordered_clusters$total/totals$total*100
+ordered_clusters <- ordered_clusters$cluster[order(ordered_clusters$total, decreasing = T)]
+
+df$cluster <- factor(df$cluster, levels = ordered_clusters)
+totals$cluster <- factor(totals$cluster, levels = ordered_clusters)
+
+df$variable <- factor(df$variable, levels = c("others",  "connective", "inflammatory", "necrosis",  "non_neoplastic", "neoplastic"))
+
+png(file = glue("{output_parent_dir}cluster_cell_composition.png"), width = 30, height = 10, units = 'in', res = 200)
+print(ggplot(df, aes(fill=variable, y=total, x=cluster)) +
+        scale_fill_manual(values=cbbPalette) +  
+  geom_bar(position="fill", stat="identity") + 
+  # geom_text(aes(cluster, -0.03 , label = paste0("n=", total), fill = NULL), data = totals,  size=3.5) +
+    theme_bw() +
+theme(axis.ticks.y = element_blank(), legend.title = element_blank(), axis.title.x = element_blank(),
+      text = element_text(size = 40), axis.text.x = element_text(angle = 90,size = 40),
+      legend.key.size = unit(3,"line")) +
+labs(y = "Percentage of cell types", fill = "Cell types", x = "") +
+scale_y_continuous(labels = scales::percent))
+dev.off()
+```
+
+Absolute cell counts (averaged per tile). 
+if:
+- tile #1 has 20 tumor cells
+- tile #2 has 30 tumor cells
+the average per tile composition will be 25 tumor cells per tile. 
+```{r}
+df <- umap_kmeans_df %>%
+summarize(others = mean(others),
+          connective = mean(connective),
+          inflammatory = mean(inflammatory),
+          necrosis = mean(necrosis),
+          non_neoplastic = mean(non_neoplastic),
+          neoplastic = mean(neoplastic),
+          .by =c(cluster))
+df <- melt(df, id = "cluster")
+df$cluster <- factor(paste0("cn-HPC",df[,"cluster"]), levels = ordered_clusters)
+
+df_perc <- melt(umap_kmeans_df[,c("cluster","others",  "connective", "inflammatory", "necrosis", "non_neoplastic","neoplastic")],id = "cluster")
+df_perc$cluster <- paste0("cn-HPC",df_perc$cluster)
+df_perc <- df_perc %>%
+summarize(total = sum(value),
+          .by =c(cluster,variable))
+df_perc$total[is.na(df_perc$total)] <- 0
+totals <- df_perc %>%
+summarize(total = sum(total),
+          .by =c(cluster))
+
+# Add number of tiles too
+total_tiles <- table(umap_kmeans_df$cluster)
+names(total_tiles) <- paste0("cn-HPC", names(total_tiles))
+totals$total_tiles <- total_tiles[match(totals$cluster, names(total_tiles))]
+
+png(file = glue("{output_parent_dir}cluster_absolute_counts_immuno_tcga_stacked.png"), width = 30, height = 12, units = 'in', res = 200)
+print(ggplot(df, aes(fill=variable, y=value, x=cluster)) +
+        scale_fill_manual(values=cbbPalette) +
+  geom_bar(stat="identity") +
+    theme_bw() +
+theme(axis.title.x = element_blank(),
+      axis.ticks.y = element_blank(), legend.title = element_blank(),
+      text = element_text(size = 40), axis.text.x = element_text(angle = 90,size = 40),
+      legend.key.size = unit(3,"line")) +
+  # geom_text(aes(cluster, -max(df[df$variable == unique(df$variable),"value"]/10) , label = paste0("cells=", total, "\n tiles=", total_tiles), fill = NULL), data = totals,  size=3.5) +
+labs(y = "Average cell counts per cell", fill = "Cell types"))
+dev.off()
+```
+
+Compute the patient cn-HPC composition vectors.
+```{r}
+clinical_tcga_luad <- read.csv(file = '/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/utilities/files/LUAD/clinical.tsv', sep = '\t')
+clinical_tcga_luad <- clinical_tcga_luad[match(umap_kmeans_df$samples,clinical_tcga_luad$case_submitter_id),]
+
+tilecomp.df <- data.frame(matrix(nrow = 0, ncol = 5, dimnames = list(NULL, c("Cluster", "Patient", "TileComposition", "os_event_data", "os_event_ind"))))
+
+labels_full <- cluster_csv_tcga[,c("slides", "tiles", "samples", "os_event_ind", "os_event_data")]
+labels_full$cluster <- cluster_csv_tcga$leiden_1.0
+
+nb_tile_patients <- data.frame(table(labels_full$samples))
+names(nb_tile_patients) <- c("samples", "total_nb_tiles")
+nb_tile_patients <- join(nb_tile_patients, labels_full, by = "samples", type = "left", match = "first")[,c("samples","total_nb_tiles", "os_event_data", "os_event_ind")]
+
+for (c in unique(labels_full$cluster)){
+  count_df <- table(labels_full[labels_full$cluster == c, "samples"])
+  if (nrow(count_df)>0){
+    count_df <- data.frame(count_df)
+    names(count_df) <- c("samples", "Freq")
+    count_df <- join(count_df, nb_tile_patients, by = "samples", type = "left", match = "first")
+    count_df$tile_composition <- count_df$Freq/count_df$total_nb_tiles*100
+    count_df <- rbind(count_df, data.frame(samples = nb_tile_patients$samples[! nb_tile_patients$samples %in% count_df$samples], os_event_data = nb_tile_patients$os_event_data[! nb_tile_patients$samples %in% count_df$samples], Freq = rep(0, nrow(nb_tile_patients) - nrow(count_df)), total_nb_tiles = nb_tile_patients$total_nb_tiles[!nb_tile_patients$samples %in% count_df$samples], tile_composition = rep(0, nrow(nb_tile_patients) - nrow(count_df)),
+                                           os_event_ind = nb_tile_patients$os_event_ind[! nb_tile_patients$samples %in% count_df$samples]))
+  } else {
+    count_df <- data.frame(samples = nb_tile_patients$samples, os_event_data = nb_tile_patients$os_event_data, total_nb_tiles = nb_tile_patients$total_nb_tiles, tile_composition = rep(0, nrow(nb_tile_patients)),
+                                           os_event_ind = nb_tile_patients$os_event_ind)
+  }
+
+  # Add tile compositions to dataframe
+  tilecomp.df <- rbind(tilecomp.df, data.frame(Cluster = rep(c, nrow(count_df)), Patient = count_df$samples, TileComposition = count_df$tile_composition, os_event_data = count_df$os_event_data, os_event_ind = count_df$os_event_ind))
+}
+```
+
+Compute cell-cell interaction
+
+```{r}
+# Function to create a circos plot
+create_circos_plot <- function(data, cluster_name, out_dir) {
+  data <- xtabs(Interactions ~ CellType1 + CellType2, data = data)
+  colors <- c("others" = "lightgrey", "neoplastic" = "#0072B2",
+              "connective" = "#CC79A7", "inflammatory" = "#F0E442",
+              "necrosis" = "#000000", "non-neoplastic" = "#009E73")
+  
+  # Adjust circos parameters to ensure labels are not cut off
+  circos.par(track.margin = c(0.01, 0.01), cell.padding = c(0.02, 0, 0.02, 0))
+  
+  png(file = paste0(out_dir, "cell_cell_interaction_HPC_", cluster_name, ".png"),  
+      width = 8, height = 8, units = 'in', res = 200)
+  
+  par(mar = c(5,5, 5, 5))
+  plot.new()
+  
+  chordDiagram(data, grid.col = colors,
+               annotationTrackHeight = 0.08,
+               transparency = 0.5,
+               annotationTrack = "grid",
+               preAllocateTracks = list(track.height = max(strwidth(unlist(dimnames(data))))))
+
+  circos.track(track.index = 1, panel.fun = function(x, y) {
+    sector.name <- CELL_META$sector.index
+    # Position the text and color it according to the sector
+    circos.text(CELL_META$xcenter, CELL_META$ylim[1], sector.name,
+                facing = "clockwise", niceFacing = TRUE, adj = c(0, 0.5), 
+                cex = 1, col = colors[sector.name], font = 2)
+  }, bg.border = NA)
+  
+  # title(main = paste0("\n", "HPC ", cluster_name), cex.main = 2)
+  circos.clear()
+  dev.off()
+}
+```
+
+Visualization: Plot circos plots.
+```{r}
+# Load all CSVs with cell-cell interaction files
+cell_cell_directory <- "/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/HoverNet_Scripts/results/tcga_luad_cell_224px_20x"
+
+cell_cell_paths_tcga <- list.files(path = cell_cell_directory, recursive = FALSE, full.names = TRUE)
+cell_cell_interaction_df <- data.frame()
+index <- 1
+for (i in cell_cell_paths_tcga){
+  cat(sprintf("\rdeadress:%d/%d", index, length(cell_cell_paths_tcga)))
+  df <- read.csv(i)
+  if (ncol(df) != 124){
+    df <- df[, names(cell_cell_interaction_df)]
+  }
+  cell_cell_interaction_df <- rbind(cell_cell_interaction_df, df)
+  index <- index + 1
+}
+
+# Get the column names that are relevant for cell cell interactions
+interaction_types <- combinations(length(celltypes$labels), 2, celltypes$labels, repeats.allowed = TRUE)
+interaction_types <- c(unlist(paste(interaction_types[,1], interaction_types[,2], sep = "_")),  unlist(paste(interaction_types[,2], interaction_types[,1], sep = "_")))
+interaction_types <- unique(interaction_types)
+interaction_types <- interaction_types[interaction_types %in% names(cell_cell_interaction_df)]
+
+cell_cell_interaction_df <- cell_cell_interaction_df[,c("CellID","slides", interaction_types)]
+
+cell_cell_interaction_df$cluster <- left_join(cell_cell_interaction_df, umap_kmeans_df, by=c("slides","CellID"))$cluster
+cell_cell_interaction_df <- cell_cell_interaction_df[!is.na(cell_cell_interaction_df$cluster),]
+
+for (c in unique(cell_cell_interaction_df$cluster)){
+  df <- colSums(cell_cell_interaction_df[cell_cell_interaction_df$cluster == c, interaction_types])
+  names(df) <- str_replace_all(names(df), "non_neoplastic", "non-neoplastic")
+  celltype1_name <- str_split(names(df), "\\_",simplify = T)[,1]
+  celltype2_name <- str_split(names(df), "\\_",simplify = T)[,2]
+  interactions_df <- data.frame("CellType1" = celltype1_name, "CellType2" = celltype2_name,
+                                "Interactions" = unname(df))
+  create_circos_plot(interactions_df, c, output_parent_dir)
+}
+```
+
+Visualization: Kaplan-Meier plots of TCGA-LUAD
+
+```{r}
+# Kaplan meier for HPC 23
+tilecomp.hpc23 <- tilecomp.df[tilecomp.df$Cluster == 23,]
+tilecomp.hpc23$Category <- NA
+tilecomp.hpc23$Category[tilecomp.hpc23$TileComposition <= quantile(tilecomp.hpc23$TileComposition)[2]] <- "Low"
+tilecomp.hpc23$Category[tilecomp.hpc23$TileComposition > quantile(tilecomp.hpc23$TileComposition)[4]] <- "High"
+tilecomp.hpc23 <- tilecomp.hpc23[!is.na(tilecomp.hpc23$Category),]
+surv_object <- Surv(time = tilecomp.hpc23$os_event_data, event = tilecomp.hpc23$os_event_ind)
+fit <- survfit(surv_object ~ tilecomp.hpc23$Category)
+
+png(filename=glue("{output_parent_dir}km_tcga_hpc23.png"), res = 200, units = "in", width = 10, height = 10)
+ggsurvplot(fit, data = tilecomp.hpc23, pval = TRUE, conf.int = TRUE, 
+           legend.labs=c(glue("Patients with \nhigh percentage \nof cn-HPC 23 \n(n={fit$n[1]})"),glue("Patients with \nlow percentage \nof cn-HPC 23 \n(n={fit$n[2]})")),
+           pval.size = 12,
+           risk.table = FALSE, 
+           linetype = "strata", 
+           surv.median.line = "hv", 
+           legend.title="",
+           ggtheme = theme_bw(base_size = 30))
+dev.off()
+
+# Kaplan meier for HPC 21
+tilecomp.hpc21 <- tilecomp.df[tilecomp.df$Cluster == 21,]
+tilecomp.hpc21$Category <- NA
+tilecomp.hpc21$Category[tilecomp.hpc21$TileComposition <= quantile(tilecomp.hpc21$TileComposition)[2]] <- "Low"
+tilecomp.hpc21$Category[tilecomp.hpc21$TileComposition > quantile(tilecomp.hpc21$TileComposition)[4]] <- "High"
+tilecomp.hpc21 <- tilecomp.hpc21[!is.na(tilecomp.hpc21$Category),]
+surv_object <- Surv(time = tilecomp.hpc21$os_event_data, event = tilecomp.hpc21$os_event_ind)
+fit <- survfit(surv_object ~ tilecomp.hpc21$Category)
+
+png(filename=glue("{output_parent_dir}km_tcga_hpc21.png"), res = 200, units = "in", width = 10, height = 10)
+ggsurvplot(fit, data = tilecomp.hpc21, pval = TRUE, conf.int = TRUE, 
+           legend.labs=c(glue("Patients with \nhigh percentage \nof cn-HPC 21 \n(n={fit$n[1]})"),glue("Patients with \nlow percentage \nof cn-HPC 21 \n(n={fit$n[2]})")),
+           pval.size = 12,
+           risk.table = FALSE, 
+           linetype = "strata", 
+           surv.median.line = "hv", 
+           legend.title="",
+           ggtheme = theme_bw(base_size = 30))
+dev.off()
+
+# Kaplan meier for HPC 0
+tilecomp.hpc0 <- tilecomp.df[tilecomp.df$Cluster == 0,]
+tilecomp.hpc0$Category <- NA
+tilecomp.hpc0$Category[tilecomp.hpc0$TileComposition <= quantile(tilecomp.hpc0$TileComposition)[2]] <- "Low"
+tilecomp.hpc0$Category[tilecomp.hpc0$TileComposition > quantile(tilecomp.hpc0$TileComposition)[4]] <- "High"
+tilecomp.hpc0 <- tilecomp.hpc0[!is.na(tilecomp.hpc0$Category),]
+surv_object <- Surv(time = tilecomp.hpc0$os_event_data, event = tilecomp.hpc0$os_event_ind)
+fit <- survfit(surv_object ~ tilecomp.hpc0$Category)
+
+png(filename=glue("{output_parent_dir}km_tcga_hpc0.png"), res = 200, units = "in", width = 10, height = 10)
+ggsurvplot(fit, data = tilecomp.hpc0, pval = TRUE, conf.int = TRUE, 
+           legend.labs=c(glue("Patients with \nhigh percentage \nof cn-HPC 0 \n(n={fit$n[1]})"),glue("Patients with \nlow percentage \nof cn-HPC 0 \n(n={fit$n[2]})")),
+           pval.size = 12,
+           risk.table = FALSE, 
+           linetype = "strata", 
+           surv.median.line = "hv", 
+           legend.title="",
+           ggtheme = theme_bw(base_size = 30))
+dev.off()
+```
+ 
+ 
