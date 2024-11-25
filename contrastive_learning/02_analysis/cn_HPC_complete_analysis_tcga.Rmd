@@ -287,7 +287,7 @@ theme(axis.title.x = element_blank(),
       text = element_text(size = 40), axis.text.x = element_text(angle = 90,size = 40),
       legend.key.size = unit(3,"line")) +
   # geom_text(aes(cluster, -max(df[df$variable == unique(df$variable),"value"]/10) , label = paste0("cells=", total, "\n tiles=", total_tiles), fill = NULL), data = totals,  size=3.5) +
-labs(y = "Average cell counts per cell", fill = "Cell types"))
+labs(y = "Average cell counts per tile", fill = "Cell types"))
 dev.off()
 ```
 

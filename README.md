@@ -1,3 +1,145 @@
+
+# Cellular Neighborhood Histomorphological Phenotype Learning (cn-HPL)
+
+This repository contains the code used for the analysis in the paper titled "Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response." The code includes methods for data processing, statistical analysis, image processing, and visualization as described in the manuscript.
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Prerequisites](#prerequisites)
+3. [Installation](#installation)
+4. [Usage](#usage)
+5. [File Structure](#file-structure)
+6. [Functions](#functions)
+7. [Results](#results)
+8. [Citation](#citation)
+9. [License](#license)
+
+---
+
+## Overview
+
+This code was used to perform [brief description of the analysis performed]. The analysis includes the following key steps:
+
+- **Data Preprocessing**: Import and preprocess input data.
+- **Image Processing**: Extract and process tiles from whole-slide images (WSIs).
+- **Statistical Analysis**: Fit models and compute performance metrics like AUC.
+- **Visualization**: Generate visualizations, including ROC curves.
+- **Model Saving**: Save trained models and results for future use.
+
+The functions in this repository are modular, allowing for easy adaptation to other datasets or analysis scenarios.
+
+---
+
+## Prerequisites
+
+Before running the code, ensure that the following Python libraries are installed:
+
+- **numpy**
+- **pandas**
+- **matplotlib**
+- **seaborn**
+- **scikit-learn**
+- **openslide-python**
+- **opencv-python**
+- **tqdm**
+
+You can install the required packages using `pip`:
+
+```
+pip install numpy pandas matplotlib seaborn scikit-learn openslide-python opencv-python tqdm
+```
+
+
+## Installation
+1. Clone this repository to your local machine:
+```
+git clone https://github.com/yourusername/your-repository-name.git
+cd your-repository-name
+```
+
+2. (Optional) Create a virtual environment and activate it:
+```
+python -m venv env
+source env/bin/activate
+```
+
+3. Install dependencies:
+```
+pip install -r requirements.txt
+```
+
+## Usage
+### Running the Analysis
+1. **Load and preprocess your data**: Ensure you have a CSV (or other suitable format) containing your dataset, including columns like Centroid_x, Centroid_y, slide, and CellID.
+
+2. **Run the analysis**: The analysis is performed using the following command:
+
+```
+python main.py --data-path data/sampled_tiles.csv --output-dir output/ --wsi-path /path/to/WSI/
+```
+
+- --data-path: Path to your data file (CSV).
+- --output-dir: Directory where the processed tiles and results will be saved.
+- --wsi-path: Directory containing whole-slide images.
+
+
+### Key Functions
+- **Data Preprocessing**: preprocess_data()
+- **Tile Processing**: process_tiles()
+- **Model Fitting**: fit_model()
+- **Model Evaluation**: evaluate_model()
+- **Visualization**: plot_roc_curve()
+
+## File Structure
+Here is a brief description of the folder structure in this repository:
+
+```
+your-repository-name/
+├── data/                     # Input data files (CSV, etc.)
+│   └── sampled_tiles.csv     # Sampled tile data
+├── output/                   # Output folder for processed tiles and results
+│   └── tiles/                # Processed image tiles
+│   └── results/              # Analysis results (models, plots, etc.)
+├── src/                      # Source code
+│   ├── main.py               # Main script to run the analysis
+│   ├── image_processing.py   # Functions for image processing
+│   ├── statistical_analysis.py  # Functions for model fitting and evaluation
+│   └── utils.py              # Utility functions (e.g., normalization)
+└── README.md                 # This README file
+```
+
+## Functions
+process_tiles(final_sampled_tiles, wsi_path, output_dir, window_size, normalize)
+Generates and saves image tiles based on the sampled tiles dataframe.
+
+fit_model(X_train, y_train)
+Fits a logistic regression model to the training data.
+
+evaluate_model(model, X_test, y_test)
+Evaluates the trained model using ROC curve and computes AUC.
+
+plot_roc_curve(fpr, tpr, auc_value)
+Plots the ROC curve for model evaluation.
+
+## Results
+### Model Evaluation
+The evaluation metrics for the trained models are stored in the results/ directory. You can find the performance results (e.g., ROC curves, AUC) in the following files:
+
+results/roc_curve.png – Plot of the ROC curve.
+results/model_performance.txt – A summary of the evaluation metrics.
+### Tile Images
+The processed image tiles will be saved in the output/tiles/ directory. Each tile will be named based on its metadata (e.g., slide_001_CellID_1234.jpeg).
+
+## Citation
+If you use this code in your research, please cite the following paper:
+
+```csharp
+[Le, H. et al. 2024. Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response.]
+```
+
 # Cellular Neighborhood HPL
 
 1) Tile H&E images.
@@ -15,16 +157,6 @@
 3) Gene set enrichment analysis
 4) Validation dataset?
 
-# Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response 
 
-Hortense Le, Nicolas Coudray, Anna Yeaton, Sitharam Ramaswami, Afreen Karimkhan, Wei-Yi Cheng, James Cai, Tai-Hsien Ou Yang, Salman Punekar, Luis Chiriboga, Vamsidhar Velcheti, Kwok-Kin Wong, Daniel H. Sterman, Andre L. Moreira, Harvey I. Pass, Aristotelis Tsirigos
-
-## Abstract 
-
-Lung adenocarcinoma (LUAD) presents diverse histomorphological features within the tumor microenvironment (TME) that influence prognosis and response to immunotherapy. Leveraging contrastive learning, we developed an unbiased atlas of cell neighborhoods to systematically explore the LUAD microenvironment at the cellular scale and investigate how these cellular neighborhoods are combined to form histologic patterns. This multiscale approach enables a comprehensive understanding of both cell-specific interactions and broader histologic patterns in LUAD. Our analysis identified distinct histomorphological phenotype clusters of cellular neighborhoods (cn-HPCs) with prognostic significance. Specifically, our analysis revealed that cn-HPC 0 was associated with immune activation and correlated with favorable survival, while cn-HPC 23, was marked by necrotic tissue and immune suppression and aligned with poorer outcomes. Furthermore, using immunophenotype associations, co-expressed gene modules, and pathway enrichment, we found that cn-HPCs capture molecular signatures reflective of immune modulation, cellular growth, and inflammation, providing insights into the functional landscape of LUAD. Motivated by the association of the discovered cn-HPCs with processes related to immune system function, we hypothesized that they can also serve as biomarkers of patient response to immunotherapy. We tested this hypothesis in our immunotherapy cohort and demonstrated that specific cn-HPCs serve as predictive biomarkers for immunotherapy response, underscoring their clinical relevance for treatment stratification. Taken together, our findings emphasize the importance of fine-grained TME profiling in LUAD and highlight the potential of cn-HPCs as biomarkers for patient selection in immunotherapy.  
-
-## Tiling H&E whole slide images (WSIs)
-
-The WSIs are initially segmented into 224 x 224 pixels tiles without overlap at 20X magnification resulting in tiles of ~113 x 113 µm using the DeepPath pipeline.
 
    
