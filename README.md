@@ -47,10 +47,19 @@ Clone all the following repositories to your local machine and make sure to crea
 ```
 # Tiling and data preprocessing
 git clone https://github.com/ncoudray/DeepPATH.git
+```
+
+```
 # Cell segmentation and classification
 git clone https://github.com/vqdang/hover_net.git
+```
+
+```
 # Contrastive learning model 
 git clone https://github.com/AdalbertoCq/Histomorphological-Phenotype-Learning.git
+```
+
+```
 # Additional code for cell-neighborhood pipeline
 git clone https://github.com/hortensele/cn_HPL_LUAD.git
 ```
@@ -85,13 +94,13 @@ Here is a brief description of the folder structure in this repository:
 cn_HPL_LUAD/
 ├── contrastive_learning/                     
 │   └── 01_tile_cells/
-    │   └── 01_hovernet_cell_results_information_20x.py
-    │   └── 02_tile_sort_by_cell_types_tcga_20x.py
+│   │   └── 01_hovernet_cell_results_information_20x.py
+│   │   └── 02_tile_sort_by_cell_types_tcga_20x.py
 │   └── 02_analysis/ 
-    │   └── cell_to_cell_interaction.py
-    │   └── cn_HPC_complete_analysis_tcga.Rmd
-    │   └── cn_HPC_validation_external.Rmd
-    │   └── tile_sample_cells.py
+│   │   └── cell_to_cell_interaction.py
+│   │   └── cn_HPC_complete_analysis_tcga.Rmd
+│   │   └── cn_HPC_validation_external.Rmd
+│   │   └── tile_sample_cells.py
 ├── molecular_analysis/                   
 │   └── gene_modules_validation_cohort.Rmd                
 │   └── tcga_luad_gene_modules.Rmd             
