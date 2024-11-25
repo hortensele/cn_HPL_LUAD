@@ -15,61 +15,46 @@ This repository contains the code used for the analysis in the paper titled "Con
 6. [Functions](#functions)
 7. [Results](#results)
 8. [Citation](#citation)
-9. [License](#license)
 
 ---
 
 ## Overview
 
-This code was used to perform [brief description of the analysis performed]. The analysis includes the following key steps:
+This code is divided into two main parts: **contrastive learning** and **molecular analysis**. 
 
-- **Data Preprocessing**: Import and preprocess input data.
-- **Image Processing**: Extract and process tiles from whole-slide images (WSIs).
-- **Statistical Analysis**: Fit models and compute performance metrics like AUC.
-- **Visualization**: Generate visualizations, including ROC curves.
-- **Model Saving**: Save trained models and results for future use.
+The code in **contrastive learning** was used for data preprocessing and the analysis of the cn-HPL output embeddings. It includes the following key steps:
 
-The functions in this repository are modular, allowing for easy adaptation to other datasets or analysis scenarios.
+- **Generate cell neighborhood tiles**: Extract tiles from whole-slide images (WSIs) centered around cells detected by Hover-Net.
+- **Analysis of cn-HPL clusters (cn-HPCs)**: Samp dle tiles, compute cellular composition and interactions from each cluster, statistical analysis of cn-HPCs and survival outcome, validation in external cohort, visualization of embeddings.
+
+The code in the **molecular analysis** was used for the analysis of the molecular data (RNA-Seq, GeoMx WTA, Visium 10x). It includes the following key steps:
+
+- **BayesPrism analysis**: Associate cn-HPCs with deconvoluted cells from RNA-seq using BayesPrism.
+- **Co-expressed gene modules**: Generate co-expressed gene modules, perform gene set enrichment analysis and associate them to cn-HPCs.
+- **WTA data analysis**: Perform gene set enrichment analysis of positively correlated genes to cn-HPCs.
 
 ---
 
 ## Prerequisites
 
-Before running the code, ensure that the following Python libraries are installed:
-
-- **numpy**
-- **pandas**
-- **matplotlib**
-- **seaborn**
-- **scikit-learn**
-- **openslide-python**
-- **opencv-python**
-- **tqdm**
-
-You can install the required packages using `pip`:
-
-```
-pip install numpy pandas matplotlib seaborn scikit-learn openslide-python opencv-python tqdm
-```
-
+You will require different packages for different parts of the pipeline:
+- For running any tiling step or tile sampling, please follow the same requirements as in `https://github.com/ncoudray/DeepPATH`.
+- For running Hover-Net, please refer to `https://github.com/vqdang/hover_net`.
+- For running HPL, please refer to `https://github.com/AdalbertoCq/Histomorphological-Phenotype-Learning`.
 
 ## Installation
-1. Clone this repository to your local machine:
+Clone all the following repositories to your local machine and make sure to create virtual environments according to the first 3 github repositories:
 ```
-git clone https://github.com/yourusername/your-repository-name.git
-cd your-repository-name
+# Tiling and data preprocessing
+git clone https://github.com/ncoudray/DeepPATH.git
+# Cell segmentation and classification
+git clone https://github.com/vqdang/hover_net.git
+# Contrastive learning model 
+git clone https://github.com/AdalbertoCq/Histomorphological-Phenotype-Learning.git
+# Additional code for cell-neighborhood pipeline
+git clone https://github.com/hortensele/cn_HPL_LUAD.git
 ```
 
-2. (Optional) Create a virtual environment and activate it:
-```
-python -m venv env
-source env/bin/activate
-```
-
-3. Install dependencies:
-```
-pip install -r requirements.txt
-```
 
 ## Usage
 ### Running the Analysis
@@ -97,18 +82,20 @@ python main.py --data-path data/sampled_tiles.csv --output-dir output/ --wsi-pat
 Here is a brief description of the folder structure in this repository:
 
 ```
-your-repository-name/
-├── data/                     # Input data files (CSV, etc.)
-│   └── sampled_tiles.csv     # Sampled tile data
-├── output/                   # Output folder for processed tiles and results
-│   └── tiles/                # Processed image tiles
-│   └── results/              # Analysis results (models, plots, etc.)
-├── src/                      # Source code
-│   ├── main.py               # Main script to run the analysis
-│   ├── image_processing.py   # Functions for image processing
-│   ├── statistical_analysis.py  # Functions for model fitting and evaluation
-│   └── utils.py              # Utility functions (e.g., normalization)
-└── README.md                 # This README file
+cn_HPL_LUAD/
+├── contrastive_learning/                     
+│   └── 01_tile_cells/
+    │   └── 01_hovernet_cell_results_information_20x.py
+    │   └── 02_tile_sort_by_cell_types_tcga_20x.py
+│   └── 02_analysis/ 
+    │   └── cell_to_cell_interaction.py
+    │   └── cn_HPC_complete_analysis_tcga.Rmd
+    │   └── cn_HPC_validation_external.Rmd
+    │   └── tile_sample_cells.py
+├── molecular_analysis/                   
+│   └── gene_modules_validation_cohort.Rmd                
+│   └── tcga_luad_gene_modules.Rmd             
+└── README.md                 
 ```
 
 ## Functions
