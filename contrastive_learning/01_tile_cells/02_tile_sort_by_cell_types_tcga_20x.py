@@ -24,7 +24,6 @@ def parse_arguments():
     parser.add_argument('--nb_tiles_valid', type=int, help="Number of tiles for the validation set.")
     parser.add_argument('--nb_tiles_test', type=int, help="Number of tiles for the test set.")
     parser.add_argument('--tcga_flag', action='store_true', help="Flag for TCGA images.")
-    parser.add_argument('--htan_flag', action='store_true', help="Flag for HTAN images.")
     return parser.parse_args()
 
 
@@ -105,7 +104,7 @@ def normalize_tile(tile, norm_vec):
     return (color.lab2rgb(lab) * 255).astype(np.uint8)
 
 
-def process_tiles(final_sampled_tiles, wsi_path, output_dir, window_size, normalize = '57,22,-8,20,10,5', tcga_flag=True, htan_flag=False):
+def process_tiles(final_sampled_tiles, wsi_path, output_dir, window_size, normalize = '57,22,-8,20,10,5', tcga_flag=True):
     """
     Generates and saves image tiles based on a dataframe of sampled tiles. The function processes each slide, 
     extracts regions from the corresponding whole slide images (WSIs), resizes them to the desired window size, 
@@ -118,7 +117,6 @@ def process_tiles(final_sampled_tiles, wsi_path, output_dir, window_size, normal
         window_size (int): Size (in pixels) to which each tile will be resized.
         normalize (str, optional): Normalization vector for stain normalization (57,22,-8,20,10,5).
         tcga_flag (bool, optional): Flag for TCGA-related processing (default is True).
-        htan_flag (bool, optional): Flag for HTAN-related processing (default is False).
 
     Returns:
         None: Saves processed tiles to the specified `output_dir` as JPEG images.
@@ -132,12 +130,7 @@ def process_tiles(final_sampled_tiles, wsi_path, output_dir, window_size, normal
             continue
         
         slide = openslide.OpenSlide(slide_path)
-        if tcga_flag:
-            OrgPixelSizeX = float(slide.properties["openslide.mpp-x"])
-        else if htan_flag:
-            OrgPixelSizeX = float(slide.properties["tiff.XResolution"])
-        else:
-            raise ValueError("No valid pixel resolution found.")
+        OrgPixelSizeX = float(slide.properties["openslide.mpp-x"])
             
         window_size_40x = convert_mags(window_size, OrgPixelSizeX)
 
@@ -200,7 +193,7 @@ def main():
 
     final_sampled_tiles.to_csv(os.path.join(args.results_dir, "tiles_used_for_ssl_information.csv"), index=False)
     process_tiles(final_sampled_tiles, args.wsi_path, args.output_dir, args.window_size, 
-                  tcga_flag = args.tcga_flag, htan_flag = args.htan_flag)
+                  tcga_flag = args.tcga_flag)
 
 
 if __name__ == "__main__":

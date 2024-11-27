@@ -1,157 +1,119 @@
 
 # Cellular Neighborhood Histomorphological Phenotype Learning (cn-HPL)
 
-This repository contains the code used for the analysis in the paper titled "Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response." The code includes methods for data processing, statistical analysis, image processing, and visualization as described in the manuscript.
+This repository contains the code used for the analysis in the paper titled "Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response." Below is a brief description of the repository structure, pipeline, and how each script contributes to the analysis.
 
 ---
 
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Installation](#installation)
-4. [Usage](#usage)
-5. [File Structure](#file-structure)
-6. [Functions](#functions)
-7. [Results](#results)
-8. [Citation](#citation)
-
----
-
-## Overview
-
-This code is divided into two main parts: **contrastive learning** and **molecular analysis**. 
-
-The code in **contrastive learning** was used for data preprocessing and the analysis of the cn-HPL output embeddings. It includes the following key steps:
-
-- **Generate cell neighborhood tiles**: Extract tiles from whole-slide images (WSIs) centered around cells detected by Hover-Net.
-- **Analysis of cn-HPL clusters (cn-HPCs)**: Samp dle tiles, compute cellular composition and interactions from each cluster, statistical analysis of cn-HPCs and survival outcome, validation in external cohort, visualization of embeddings.
-
-The code in the **molecular analysis** was used for the analysis of the molecular data (RNA-Seq, GeoMx WTA, Visium 10x). It includes the following key steps:
-
-- **BayesPrism analysis**: Associate cn-HPCs with deconvoluted cells from RNA-seq using BayesPrism.
-- **Co-expressed gene modules**: Generate co-expressed gene modules, perform gene set enrichment analysis and associate them to cn-HPCs.
-- **WTA data analysis**: Perform gene set enrichment analysis of positively correlated genes to cn-HPCs.
-
----
-
-## Prerequisites
-
-You will require different packages for different parts of the pipeline:
-- For running any tiling step or tile sampling, please follow the same requirements as in `https://github.com/ncoudray/DeepPATH`.
-- For running Hover-Net, please refer to `https://github.com/vqdang/hover_net`.
-- For running HPL, please refer to `https://github.com/AdalbertoCq/Histomorphological-Phenotype-Learning`.
-
-## Installation
-Clone all the following repositories to your local machine and make sure to create virtual environments according to the first 3 github repositories:
-```
-# Tiling and data preprocessing
-git clone https://github.com/ncoudray/DeepPATH.git
-```
-
-```
-# Cell segmentation and classification
-git clone https://github.com/vqdang/hover_net.git
-```
-
-```
-# Contrastive learning model 
-git clone https://github.com/AdalbertoCq/Histomorphological-Phenotype-Learning.git
-```
-
-```
-# Additional code for cell-neighborhood pipeline
-git clone https://github.com/hortensele/cn_HPL_LUAD.git
-```
-
-
-## Usage
-### Running the Analysis
-1. **Load and preprocess your data**: Ensure you have a CSV (or other suitable format) containing your dataset, including columns like Centroid_x, Centroid_y, slide, and CellID.
-
-2. **Run the analysis**: The analysis is performed using the following command:
-
-```
-python main.py --data-path data/sampled_tiles.csv --output-dir output/ --wsi-path /path/to/WSI/
-```
-
-- --data-path: Path to your data file (CSV).
-- --output-dir: Directory where the processed tiles and results will be saved.
-- --wsi-path: Directory containing whole-slide images.
-
-
-### Key Functions
-- **Data Preprocessing**: preprocess_data()
-- **Tile Processing**: process_tiles()
-- **Model Fitting**: fit_model()
-- **Model Evaluation**: evaluate_model()
-- **Visualization**: plot_roc_curve()
-
-## File Structure
-Here is a brief description of the folder structure in this repository:
+## Repository Structure
 
 ```
 cn_HPL_LUAD/
 ├── contrastive_learning/                     
-│   └── 01_tile_cells/
-│   │   └── 01_hovernet_cell_results_information_20x.py
-│   │   └── 02_tile_sort_by_cell_types_tcga_20x.py
-│   └── 02_analysis/ 
-│   │   └── cell_to_cell_interaction.py
-│   │   └── cn_HPC_complete_analysis_tcga.Rmd
-│   │   └── cn_HPC_validation_external.Rmd
-│   │   └── tile_sample_cells.py
+│   ├── 01_tile_cells/
+│   │   ├── 01_hovernet_cell_results_information_20x.py
+│   │   ├── 02_tile_sort_by_cell_types_tcga_20x.py
+│   ├── 02_analysis/
+│   │   ├── cell_to_cell_interaction.py
+│   │   ├── cn_HPC_complete_analysis_tcga.Rmd
+│   │   ├── cn_HPC_validation_external.Rmd
+│   │   ├── tile_sample_cells.py
+│   │   ├── visualize_hpc_cells.py
 ├── molecular_analysis/                   
-│   └── gene_modules_validation_cohort.Rmd                
-│   └── tcga_luad_gene_modules.Rmd             
-└── README.md                 
+│   ├── gene_modules_validation_cohort.Rmd                
+│   ├── tcga_luad_gene_modules.Rmd             
+└── README.md             
 ```
 
-## Functions
-process_tiles(final_sampled_tiles, wsi_path, output_dir, window_size, normalize)
-Generates and saves image tiles based on the sampled tiles dataframe.
+---
 
-fit_model(X_train, y_train)
-Fits a logistic regression model to the training data.
 
-evaluate_model(model, X_test, y_test)
-Evaluates the trained model using ROC curve and computes AUC.
+### Key Directories and Scripts
 
-plot_roc_curve(fpr, tpr, auc_value)
-Plots the ROC curve for model evaluation.
+#### `contrastive_learning/01_tile_cells/`
+- **`01_hovernet_cell_results_information_20x.py`**  
+  Summarizes cell features and coordinates from Hover-Net outputs for each whole slide image.
 
-## Results
-### Model Evaluation
-The evaluation metrics for the trained models are stored in the results/ directory. You can find the performance results (e.g., ROC curves, AUC) in the following files:
+- **`02_tile_sort_by_cell_types_tcga_20x.py`**  
+  Generates and samples tiles around specific cell types' coordinates.
 
-results/roc_curve.png – Plot of the ROC curve.
-results/model_performance.txt – A summary of the evaluation metrics.
-### Tile Images
-The processed image tiles will be saved in the output/tiles/ directory. Each tile will be named based on its metadata (e.g., slide_001_CellID_1234.jpeg).
+#### `contrastive_learning/02_analysis/`
+- **`cell_to_cell_interaction.py`**  
+  Computes cell-cell interactions for cn-HPC tiles.
+
+- **`visualize_hpc_cells.py`**  
+  Visualize tiles from cn-HPC of interest and tumor/inflammatory cells (from Hover-Net) overlaid over a whole slide image.
+  
+- **`tile_sample_cells.py`**  
+  Randomly samples and visualizes tiles from each cn-HPC.
+
+- **`cn_HPC_complete_analysis_tcga.Rmd`**  
+  Performs UMAP projections, cell composition analysis, visualization of cell-cell interactions, and survival analysis.
+
+- **`cn_HPC_validation_external.Rmd`**  
+  Validates cn-HPCs in an external cohort using UMAPs, cell composition analysis, and immunotherapy response analysis.
+
+#### `molecular_analysis/`
+- **`tcga_luad_gene_modules.Rmd`**  
+  Generates co-expressed gene modules, performs gene set enrichment, and correlates cn-HPC composition with module scores and deconvoluted cell composition.
+
+- **`gene_modules_validation_cohort.Rmd`**  
+  Analyzes GeoMx WTA data, correlating gene expression with cn-HPC composition and performing gene set enrichment in the external cohort.
+
+---
+
+## Full Pipeline Overview
+
+1. **Tiling of Whole Slide Images**  
+   Use the [DeepPATH repository](https://github.com/ncoudray/DeepPATH) to tile whole slide images.
+
+2. **Run Hover-Net on Tiles**  
+   Use [Hover-Net](https://github.com/vqdang/hover_net) to extract cell features and coordinates.
+
+3. **Summarize Cell Features**  
+   Run `01_hovernet_cell_results_information_20x.py` to summarize the Hover-Net results for each whole slide image.
+
+4. **Generate and Sample Tiles**  
+   Use `02_tile_sort_by_cell_types_tcga_20x.py` to generate and sample tiles around specific cell types.
+
+5. **Create HDF5 File**  
+   Use the [DeepPATH repository](https://github.com/ncoudray/DeepPATH) to create HDF5 files from the sampled tiles.
+
+6. **Run HPL Pipeline**  
+   Leverage [Histomorphological Phenotype Learning (HPL)](https://github.com/AdalbertoCq/Histomorphological-Phenotype-Learning) to:
+   - Train Barlow Twins.
+   - Project tiles into a latent space.
+   - Cluster tiles with Leiden clustering to define cn-HPCs.
+
+7. **Morphological and Clinical Analysis of cn-HPCs**  
+   - Use `cell_to_cell_interaction.py` to compute cell-cell interactions.
+   - Use `tile_sample_cells.py` for tile visualization of cn-HPCs.
+   - Use `visualize_hpc_cells.py` for cn-HPCs and cells visualization overlaid over whole slide images.
+   - Run `cn_HPC_complete_analysis_tcga.Rmd` for embedding visualization in UMAP, cell composition analysis, and survival analysis.
+
+8. **Validation in External Cohort**  
+   - Use `cn_HPC_validation_external.Rmd` to validate cn-HPC morphological and clinical findings in an independent cohort.
+
+9. **BayesPrism Cell Deconvolution**  
+   Use [BayesPrism](https://github.com/ninashenker/LUAD) to deconvolute bulk RNA-Seq data in TCGA-LUAD.
+
+10. **Gene Module Analysis**  
+    - Run `tcga_luad_gene_modules.Rmd` to generate and analyze co-expressed gene modules, and analyze deconvoluted cells from Step 9.
+    - Use `gene_modules_validation_cohort.Rmd` for external cohort gene module validation.
+
+---
 
 ## Citation
-If you use this code in your research, please cite the following paper:
 
+If you use this repository in your research, please cite our paper.  
 ```csharp
 [Le, H. et al. 2024. Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response.]
 ```
-
-# Cellular Neighborhood HPL
-
-1) Tile H&E images.
-2) Run Hover-Net.
-3) Generate cell-centered tiles.
-4) Train Barlow Twins and project.
-5) Cluster.
-6) Cluster analysis (cell composition, UMAP, cell interactions).
+For questions or collaborations, feel free to contact us or open an issue. 
 
 
-# Molecular Analysis
 
-1) BayesPrism
-2) Gene modules
-3) Gene set enrichment analysis
-4) Validation dataset?
+
 
 
 

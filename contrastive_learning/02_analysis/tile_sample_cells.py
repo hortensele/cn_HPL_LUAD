@@ -24,32 +24,6 @@ def convert_mags_from_20x(coords_20x, target_pixel_size):
     final_coords = coords_20x * (447 / 224 * 0.2525) / target_pixel_size
     return int(final_coords)
 
-def RGB_to_lab(tile):
-    """
-    Converts an RGB image to the CIE-LAB color space.
-
-    Args:
-        tile (numpy.ndarray): Input RGB image.
-
-    Returns:
-        numpy.ndarray: LAB representation of the input image.
-    """
-    Lab = color.rgb2lab(tile)
-    return Lab
-
-def Lab_to_RGB(Lab):
-    """
-    Converts an image from the CIE-LAB color space back to RGB.
-
-    Args:
-        Lab (numpy.ndarray): Input LAB image.
-
-    Returns:
-        numpy.ndarray: RGB representation of the input image.
-    """
-    newtile = (color.lab2rgb(Lab) * 255).astype(np.uint8)
-    return newtile
-
 def main():
     """
     Main function to sample tiles from each cn-HPC cluster, save as images for visualization.
@@ -69,8 +43,6 @@ def main():
                         help="Directory containing HoverNet results.")
     parser.add_argument('--tcga_flag', action='store_true', 
                         help="Flag to run pipeline for TCGA images.")
-    parser.add_argument('--htan_flag', action='store_true', 
-                        help="Flag to run pipeline for HTAN images.")
     args = parser.parse_args()
 
     output_dir = args.output_dir
@@ -97,21 +69,18 @@ def main():
             slide_path = slide_path[0]
 
             slide = openslide.OpenSlide(slide_path)
-            
-            cell_summary_path = glob(os.path.join(hovernet_dir, row["slides"] + ".*_files", "cell_summary", "*.csv"))[0]
+            if args.tcga_flag:
+                cell_summary_path = glob(os.path.join(hovernet_dir, row["slides"] + ".*_files", "cell_summary", "*.csv"))[0]
+            else:
+                cell_summary_path = glob(os.path.join(hovernet_dir, row["slides"] + "_files", "cell_summary", "*.csv"))[0]
             cell_summary_df = pd.read_csv(cell_summary_path)
 
             centroid_x = cell_summary_df.Centroid_x[cell_summary_df.CellID == row.tiles].values[0]
             centroid_y = cell_summary_df.Centroid_y[cell_summary_df.CellID == row.tiles].values[0]
             
-            if tcga_flag:
-                OrgPixelSizeX = float(slide.properties["openslide.mpp-x"])
-            else if htan_flag:
-                OrgPixelSizeX = float(slide.properties["tiff.XResolution"])
-            else:
-                raise ValueError("No valid pixel resolution found.")
+            OrgPixelSizeX = float(slide.properties["openslide.mpp-x"])
             
-            window_size_40x = convert_mags(window_size, OrgPixelSizeX)
+            window_size_40x = convert_mags_from_20x(window_size, OrgPixelSizeX)
             
             x = convert_mags_from_20x(centroid_x, OrgPixelSizeX)
             y = convert_mags_from_20x(centroid_y, OrgPixelSizeX)

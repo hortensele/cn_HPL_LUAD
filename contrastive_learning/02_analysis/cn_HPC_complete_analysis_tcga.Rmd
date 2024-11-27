@@ -323,8 +323,7 @@ for (c in unique(labels_full$cluster)){
   tilecomp.df <- rbind(tilecomp.df, data.frame(Cluster = rep(c, nrow(count_df)), Patient = count_df$samples, TileComposition = count_df$tile_composition, os_event_data = count_df$os_event_data, os_event_ind = count_df$os_event_ind))
 }
 ```
-
-Compute cell-cell interaction
+Visualization: Plot circos plots.
 
 ```{r}
 # Function to create a circos plot
@@ -363,7 +362,7 @@ create_circos_plot <- function(data, cluster_name, out_dir) {
 }
 ```
 
-Visualization: Plot circos plots.
+
 ```{r}
 # Load all CSVs with cell-cell interaction files
 cell_cell_directory <- "/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/HoverNet_Scripts/results/tcga_luad_cell_224px_20x"

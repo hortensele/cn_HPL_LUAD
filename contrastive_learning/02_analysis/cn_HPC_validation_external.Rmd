@@ -288,7 +288,7 @@ dev.off()
 ```
 
 
-PRIMARY SUBSET - mHPC23: AUC depending on rank
+Rank-based AUC for cn-HPC 23
 ```{r}
 df <- tilecomp.df.bor.primary[tilecomp.df.bor.primary$Cluster == "23",]
 ranks <- rank(df$TileComposition)
