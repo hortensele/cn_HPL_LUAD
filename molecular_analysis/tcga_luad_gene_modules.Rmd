@@ -22,6 +22,7 @@ suppressPackageStartupMessages({
   library(enrichplot)
   library(stringr)
   library(glue)
+  library(tidyr)
 })
 ```
 
