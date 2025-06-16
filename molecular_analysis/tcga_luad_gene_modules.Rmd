@@ -36,7 +36,7 @@ n_clust = 20
 
 out_dir = "/gpfs/scratch/leh06/NivoPembro_Results/tcga_luad_rna_gene_modules_cleaned/"
 # Load module gene list
-# load(glue("{out_dir}/modules.{n_clust}c.RData"))
+load(glue("{out_dir}/modules.{n_clust}c.RData"))
 ```
 
 We load the TCGA LUAD RNA-Seq dataset and the corresponding annotation file in order to retrace all the gene names to the samples with a given identifier.
@@ -619,3 +619,70 @@ print(ggplot(cell_composition_HPC_results_filtered, aes(x = Cluster,
     guides(color = guide_legend(override.aes = list(size = 8, alpha = 1))))
 dev.off()
 ```
+
+Gene signature TNF-alpha signaling via NF-kB score in TCGA bulk correlated with cn-HPC 23?
+
+```{r}
+library(GSEABase)
+library(GSVA)
+tnf_geneset <- getGmt("/gpfs/scratch/leh06/NivoPembro_Results/tcga_luad_rna_gene_modules_cleaned/HALLMARK_TNFA_SIGNALING_VIA_NFKB.v2024.1.Hs.gmt")
+tnf_genes <- geneIds(tnf_geneset)$HALLMARK_TNFA_SIGNALING_VIA_NFKB
+expr_matrix <- as.data.frame(t(scale(t(gx_data[,(!endsWith(names(gx_data),'11A')) & (!endsWith(names(gx_data),'11B'))]))))
+rownames(expr_matrix) <- str_replace(rownames(expr_matrix), "\\.\\d+$", "")
+mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# Get mapping table
+mapping <- getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol"),
+  filters = "ensembl_gene_id",
+  values = rownames(expr_matrix),
+  mart = mart
+)
+mapping <- mapping[mapping$hgnc_symbol != "", ]
+mapping <- mapping[!duplicated(mapping$ensembl_gene_id), ]
+
+expr_matrix$ensembl_gene_id <- rownames(expr_matrix)
+
+# Filter out
+mapping_filtered <- mapping[mapping$hgnc_symbol %in% tnf_genes,]
+expr_matrix_filtered <- expr_matrix[expr_matrix$ensembl_gene_id %in% mapping_filtered$ensembl_gene_id,]
+
+expr_annotated <- merge(mapping_filtered, expr_matrix_filtered, by = "ensembl_gene_id")
+rownames(expr_annotated) <- expr_annotated$hgnc_symbol
+expr_matrix_symbol <- expr_annotated[, -c(1:2)]
+names(expr_matrix_symbol) <- str_replace_all(str_sub_all(names(expr_matrix_symbol), 1, 12), '\\.', '-')
+expr_matrix_symbol <- as.data.frame(
+  sapply(unique(names(expr_matrix_symbol)), function(colname) {
+    # Locate which columns in 'df' have that name
+    matching_cols <- which(names(expr_matrix_symbol) == colname)
+    # Compute row‐wise mean across those columns
+    rowMeans(expr_matrix_symbol[ , matching_cols, drop = FALSE])
+  })
+)
+
+module_score_tnf <- colMeans(expr_matrix_symbol)
+# rownames(expr_matrix_symbol) <- expr_annotated$hgnc_symbol
+# module_score_tnf <- gsva(as.matrix(expr_matrix_symbol), list(TNF_NFkB = tnf_genes), method = "gsva")
+
+tnf_cnHPC_results <- data.frame()
+for (c in unique(tilecomp.df$Cluster)){
+  common_patients <- intersect(names(module_score_tnf), tilecomp.df$Patient)
+  tilecomp.mat <- tilecomp.df[,c("Cluster", "Patient", "TileComposition")] %>%
+      pivot_wider(names_from = Cluster, values_from = TileComposition, values_fill = 0)
+  tilecomp.mat <- as.data.frame(tilecomp.mat)
+  rownames(tilecomp.mat) <- tilecomp.mat$Patient
+  tilecomp.mat <- subset(tilecomp.mat, select=-c(Patient))
+  names(tilecomp.mat) <- paste0("cn-HPC", names(tilecomp.mat))
+  result <- cor.test(module_score_tnf[common_patients], tilecomp.mat[common_patients, paste0("cn-HPC",c)])
+  tnf_cnHPC_results <- rbind(tnf_cnHPC_results, data.frame(Cluster = paste0("cn-HPC",c),
+                                             Corr = result$estimate,
+                                             Pval = result$p.value))
+}
+
+tnf_cnHPC_results$p.adj <- p.adjust(tnf_cnHPC_results$Pval, method = "BH")
+tnf_cnHPC_results_filtered <- tnf_cnHPC_results
+tnf_cnHPC_results_filtered$p.adj[tnf_cnHPC_results_filtered$p.adj > 0.05] <- NA
+
+tnf_cnHPC_results_filtered$Cluster <- factor(tnf_cnHPC_results_filtered$Cluster, levels = paste0("cn-HPC",sort(as.integer(unique(tilecomp.df$Cluster)))))
+print(tnf_cnHPC_results_filtered)
+```
+

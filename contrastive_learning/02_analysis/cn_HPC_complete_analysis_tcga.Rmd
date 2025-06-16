@@ -26,6 +26,8 @@ suppressPackageStartupMessages({
     library(circlize)
     library(gtools)
     library(glue)
+    library(survival)
+    library(survminer)
 })
 ```
 
@@ -35,7 +37,7 @@ output_parent_dir <- "/gpfs/scratch/leh06/NivoPembro_Results/Figures_240516/"
 if (!file.exists(output_parent_dir)){
     dir.create(output_parent_dir)
 }
-# load(glue("{output_parent_dir}analysis_data.RData"))
+load(glue("{output_parent_dir}analysis_data.RData"))
 ```
 
 Compute the number of TCGA-LUAD slides and samples
@@ -466,4 +468,27 @@ ggsurvplot(fit, data = tilecomp.hpc0, pval = TRUE, conf.int = TRUE,
 dev.off()
 ```
  
- 
+```{r}
+patients_tcga_s1 <- read.csv('/gpfs/data/tsirigoslab/home/leh06/Histomorphological-Phenotype-Learning/utilities/files/LUAD/overall_survival_TCGA_s1_only_folds.csv')$case_submitter_id
+for (c in unique(tilecomp.df$Cluster)){
+  tilecomp.hpc.select <- tilecomp.df[(tilecomp.df$Cluster == c) & (tilecomp.df$Patient %in% patients_tcga_s1),]
+  tilecomp.hpc.select$Category <- NA
+  tilecomp.hpc.select$Category[tilecomp.hpc.select$TileComposition <= quantile(tilecomp.hpc.select$TileComposition)[2]] <- "Low"
+  tilecomp.hpc.select$Category[tilecomp.hpc.select$TileComposition > quantile(tilecomp.hpc.select$TileComposition)[4]] <- "High"
+  tilecomp.hpc.select <- tilecomp.hpc.select[!is.na(tilecomp.hpc.select$Category),]
+  surv_object <- Surv(time = tilecomp.hpc.select$os_event_data, event = tilecomp.hpc.select$os_event_ind)
+  fit <- survfit(surv_object ~ tilecomp.hpc.select$Category)
+  
+  png(filename=paste0(output_parent_dir, "km_tcga_stage1_cnhpc", c, ".png"), res = 200, units = "in", width = 10, height = 10)
+  print(ggsurvplot(fit, data = tilecomp.hpc.select, pval = TRUE, conf.int = TRUE, 
+             legend.labs=c(glue("Patients with \nhigh percentage \nof cn-HPC {c} \n(n={fit$n[1]})"),glue("Patients with \nlow percentage \nof cn-HPC {c} \n(n={fit$n[2]})")),
+             pval.size = 12,
+             risk.table = FALSE, 
+             linetype = "strata", 
+             surv.median.line = "hv", 
+             legend.title="",
+             ggtheme = theme_bw(base_size = 30)))
+  dev.off()
+}
+```
+

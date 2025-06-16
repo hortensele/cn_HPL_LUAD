@@ -12,11 +12,14 @@ cn_HPL_LUAD/
 ├── contrastive_learning/                     
 │   ├── 01_tile_cells/
 │   │   ├── 01_hovernet_cell_results_information_20x.py
+│   │   ├── 02_tile_by_cell_types_external_20x.py
 │   │   ├── 02_tile_sort_by_cell_types_tcga_20x.py
 │   ├── 02_analysis/
 │   │   ├── cell_to_cell_interaction.py
 │   │   ├── cn_HPC_complete_analysis_tcga.Rmd
 │   │   ├── cn_HPC_validation_external.Rmd
+│   │   ├── Colocalization_cell_cnHPC.ipynb
+│   │   ├── GraphAnalysis_HPC_fingerprints.ipynb
 │   │   ├── tile_sample_cells.py
 │   │   ├── visualize_hpc_cells.py
 ├── molecular_analysis/                   
@@ -35,7 +38,10 @@ cn_HPL_LUAD/
   Summarizes cell features and coordinates from Hover-Net outputs for each whole slide image.
 
 - **`02_tile_sort_by_cell_types_tcga_20x.py`**  
-  Generates and samples tiles around specific cell types' coordinates.
+  Generates and samples tiles around specific cell types' coordinates for the training/validation/test sets of TCGA-LUAD.
+
+- **`02_tile_by_cell_types_external_20x.py`**
+  Generates tiles around all cells' coordinates per slide (useful for validation cohorts).
 
 #### `contrastive_learning/02_analysis/`
 - **`cell_to_cell_interaction.py`**  
@@ -52,6 +58,12 @@ cn_HPL_LUAD/
 
 - **`cn_HPC_validation_external.Rmd`**  
   Validates cn-HPCs in an external cohort using UMAPs, cell composition analysis, and immunotherapy response analysis.
+
+- **`Colocalization_cell_cnHPC.ipynb`** 
+  Colocalization analysis for each cn-HPC with immune and tumor regions.
+
+- **`GraphAnalysis_HPC_fingerprints.ipynb`** 
+  Graph analysis of each HPC with respect to their cn-HPC interactions.
 
 #### `molecular_analysis/`
 - **`tcga_luad_gene_modules.Rmd`**  

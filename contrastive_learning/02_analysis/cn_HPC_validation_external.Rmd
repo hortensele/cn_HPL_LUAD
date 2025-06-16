@@ -297,3 +297,76 @@ plot(roc(df$Category, ranks), print.auc = TRUE)
 dev.off()
 ```
 
+Comparison with common LUAD driver mutations
+Mutations for NYU-Immuno
+
+```{r}
+# Add age
+pembro_age_df <- read.csv("/gpfs/data/tsirigoslab/home/leh06/PathGAN/clinical_data/S1801510EvaluationOf_DATA_LABELS_2021-03-17_1104_Pembro.csv")
+nivo_age_df <- read.csv("/gpfs/data/tsirigoslab/home/leh06/PathGAN/clinical_data/S1801510EvaluationOf_DATA_LABELS_2021-03-17_1104_Nivo CORRECTED.csv")
+```
+
+
+```{r}
+mutations_cols <- c("ALK..choice.Positive.", "BRAF..choice.Positive.", "EGFR..choice.Positive.", "ERBB2.HER.2..choice.Positive.", "KEAP.1..choice.Positive.", "KRAS..choice.Positive.", "PDL.1..choice.Positive.", "RET..choice.Positive.", "ROS.1..choice.Positive.", "STK.11..choice.Positive.", "MET..choice.Positive.")
+
+for (c in mutations_cols){
+  columns <- names(pembro_age_df)[grepl(c, names(pembro_age_df))]
+  pembro_age_df[str_split(c, "\\.\\.", simplify = T)[,1]] <- apply(pembro_age_df[,columns], 1, function(x) {ifelse(any(x == "Checked"), 1, 0)})
+  columns <- names(nivo_age_df)[grepl(c, names(nivo_age_df))]
+  nivo_age_df[str_split(c, "\\.\\.", simplify = T)[,1]] <- apply(nivo_age_df[,columns], 1, function(x) {ifelse(any(x == "Checked"), 1, 0)})
+}
+
+clin_info_immuno <- left_join(clin_info_immuno, rbind(pembro_age_df[,c("Case.1510.ID..", "ALK", "BRAF", "EGFR", "ERBB2.HER.2", "KEAP.1", "KRAS", "PDL.1", "RET", "ROS.1", "STK.11", "MET")], nivo_age_df[,c("Case.1510.ID..", "ALK", "BRAF", "EGFR", "ERBB2.HER.2", "KEAP.1", "KRAS", "PDL.1", "RET", "ROS.1", "STK.11", "MET")]), by = "Case.1510.ID..")
+```
+
+```{r}
+biomarkers <- c('ALK','BRAF','EGFR', 'ERBB2.HER.2', 'KEAP.1', 'KRAS', 'PDL.1','RET', 'ROS.1', 'STK.11', 'MET')
+df <- clin_info_immuno[(clin_info_immuno$BefAftTr == 'Before') & (clin_info_immuno$MetastaticSite %in% c('PLEURA','LUNG') & (clin_info_immuno$BOR != 'Unknown')),c('samples','BOR', biomarkers)]
+df <- unique(df)
+df <- df %>% 
+  mutate(BOR = replace(BOR, BOR == 'Response', 1),
+         BOR = replace(BOR, BOR == 'Progression', 0))
+df$BOR <- as.numeric(df$BOR)
+df <- subset(df, select = -c(samples))
+
+# Individual biomarkers
+results <- data.frame(Biomarker=character(), AUC=numeric(), stringsAsFactors = FALSE)
+
+for (b in biomarkers) {
+  formula <- as.formula(paste("BOR ~", b))
+  model <- glm(formula, data = df, family = binomial())
+  probs <- predict(model, type = "response")
+  
+  roc_obj <- roc(df$BOR, probs)
+  auc_val <- auc(roc_obj)
+  
+  results <- rbind(results, data.frame(Biomarker = b, AUC = auc_val))
+}
+
+print(results)
+
+
+# All biomarkers 
+# Fit logistic regression model
+model <- glm(BOR ~ ., data = df, family = binomial())
+
+# View model summary
+summary(model)
+
+# Predict probabilities
+df$predicted_prob <- predict(model, type = "response")
+
+# Predict binary outcome (threshold = 0.5)
+df$predicted_class <- ifelse(df$predicted_prob > 0.5, 1, 0)
+
+# Confusion matrix
+print(table(Predicted = df$predicted_class, Actual = df$BOR))
+
+# ROC and AUC
+# if (!require("pROC")) install.packages("pROC")
+# library(pROC)
+roc_obj <- roc(df$BOR, df$predicted_prob)
+auc_val <- auc(roc_obj)
+plot(roc_obj,print.auc = TRUE, xlim = c(1,0), legacy.axes = TRUE)
+```
