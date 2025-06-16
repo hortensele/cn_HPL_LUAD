@@ -87,6 +87,7 @@ cn_HPL_LUAD/
 
 4. **Generate and Sample Tiles**  
    Use `02_tile_sort_by_cell_types_tcga_20x.py` to generate and sample tiles around specific cell types.
+   Use `02_tile_by_cell_types_external_20x.py` to generate all cell-centered tiles per slide.
 
 5. **Create HDF5 File**  
    Use the [DeepPATH repository](https://github.com/ncoudray/DeepPATH) to create HDF5 files from the sampled tiles.
@@ -101,6 +102,8 @@ cn_HPL_LUAD/
    - Use `cell_to_cell_interaction.py` to compute cell-cell interactions.
    - Use `tile_sample_cells.py` for tile visualization of cn-HPCs.
    - Use `visualize_hpc_cells.py` for cn-HPCs and cells visualization overlaid over whole slide images.
+   - Use `Colocalization_cell_cnHPC.ipynb` to colocalize cn-HPCs with immune and tumor regions.
+   - Use `GraphAnalysis_HPC_fingerprints.ipynb` to create HPC graphs and heatmaps of cn-HPC interactions.
    - Run `cn_HPC_complete_analysis_tcga.Rmd` for embedding visualization in UMAP, cell composition analysis, and survival analysis.
 
 8. **Validation in External Cohort**  
@@ -119,7 +122,7 @@ cn_HPL_LUAD/
 
 If you use this repository in your research, please cite our paper.  
 ```csharp
-[Le, H. et al. 2024. Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response.]
+[Le, H. et al. 2025. Contrastive Learning Uncovers Cellular Interactions and Morphologies in the Tumor Microenvironment of Lung Adenocarcinoma Linked to Immunotherapy Response.]
 ```
 For questions or collaborations, feel free to contact us or open an issue. 
 
