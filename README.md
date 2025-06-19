@@ -24,7 +24,9 @@ cn_HPL_LUAD/
 │   │   ├── visualize_hpc_cells.py
 ├── molecular_analysis/                   
 │   ├── gene_modules_validation_cohort.Rmd                
-│   ├── tcga_luad_gene_modules.Rmd             
+│   ├── tcga_luad_gene_modules.Rmd
+│   ├── registration_he_fluorescent.py
+│   ├── nyu_geomx_proteomics_analysis.Rmd             
 └── README.md             
 ```
 
@@ -72,6 +74,12 @@ cn_HPL_LUAD/
 - **`gene_modules_validation_cohort.Rmd`**  
   Analyzes GeoMx WTA data, correlating gene expression with cn-HPC composition and performing gene set enrichment in the external cohort.
 
+- **`registration_he_fluorescent.py`**
+  Registers NYU LUAD Stage 1 GeoMx fluorescent images to matched H&E images, and maps each ROI to their respective tiles.
+
+- **`nyu_geomx_proteomics_analysis.Rmd`** 
+  Analyzes NYU LUAD Stage 1 GeoMx proteomics data, correlating protein expression with cn-HPC composition.
+
 ---
 
 ## Full Pipeline Overview
@@ -105,6 +113,7 @@ cn_HPL_LUAD/
    - Use `Colocalization_cell_cnHPC.ipynb` to colocalize cn-HPCs with immune and tumor regions.
    - Use `GraphAnalysis_HPC_fingerprints.ipynb` to create HPC graphs and heatmaps of cn-HPC interactions.
    - Run `cn_HPC_complete_analysis_tcga.Rmd` for embedding visualization in UMAP, cell composition analysis, and survival analysis.
+   - Use `nyu_geomx_proteomics_analysis.Rmd` for proteomics correlation with cn-HPCs.
 
 8. **Validation in External Cohort**  
    - Use `cn_HPC_validation_external.Rmd` to validate cn-HPC morphological and clinical findings in an independent cohort.
@@ -116,6 +125,9 @@ cn_HPL_LUAD/
     - Run `tcga_luad_gene_modules.Rmd` to generate and analyze co-expressed gene modules, and analyze deconvoluted cells from Step 9.
     - Use `gene_modules_validation_cohort.Rmd` for external cohort gene module validation.
 
+11. **Spatial Proteomics Analysis**
+   - Use `registration_he_fluorescent.py` to register fluorescent TMAs to H&E TMAs, and to assign each ROI its corresponding tiles (for cn-HPC composition).
+   - Use `nyu_geomx_proteomics_analysis.Rmd` for proteomics correlation with cn-HPCs.  
 ---
 
 ## Citation
