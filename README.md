@@ -113,7 +113,6 @@ cn_HPL_LUAD/
    - Use `Colocalization_cell_cnHPC.ipynb` to colocalize cn-HPCs with immune and tumor regions.
    - Use `GraphAnalysis_HPC_fingerprints.ipynb` to create HPC graphs and heatmaps of cn-HPC interactions.
    - Run `cn_HPC_complete_analysis_tcga.Rmd` for embedding visualization in UMAP, cell composition analysis, and survival analysis.
-   - Use `nyu_geomx_proteomics_analysis.Rmd` for proteomics correlation with cn-HPCs.
 
 8. **Validation in External Cohort**  
    - Use `cn_HPC_validation_external.Rmd` to validate cn-HPC morphological and clinical findings in an independent cohort.
