@@ -1,0 +1,173 @@
+---
+title: "NYU LUAD Stage 1: GeoMx Proteomics"
+output: html_notebook
+---
+
+This notebook uses the NYU GeoMx proteomics dataset.
+
+```{r}
+suppressPackageStartupMessages({
+  # Load libraries
+  library(data.table)
+  library(matrixStats)
+  library(ggplot2)
+  library(fpc)
+  library(glue)
+  library(msigdbr)
+  library(clusterProfiler)
+  library(org.Hs.eg.db)
+  library(enrichplot)
+  library(stringr)
+  library(glue)
+  library(readxl)
+  library(dplyr)
+})
+```
+
+Load the protein data and cn-HPCs.
+```{r}
+protein_counts <- read_excel("/gpfs/data/tsirigoslab/home/leh06/NanoString/20220405_LUAD_protein/Normalized_all_hsk_filtered.xlsx")
+protein_counts <- protein_counts[22:nrow(protein_counts),]
+protein_names <- protein_counts$...4
+protein_targets <- str_replace_all(protein_counts$`Custom Segment Name`, "All Targets;", "")
+roi_names <- colnames(protein_counts)[5:ncol(protein_counts)]
+
+protein_counts_mat <- as.matrix(protein_counts[,roi_names])
+rownames(protein_counts_mat) <- protein_names
+
+colnames(protein_counts_mat) <- gsub("\\bpan+k+\\b",    
+                                     "PanK",            
+                                     colnames(protein_counts_mat),
+                                     ignore.case = TRUE)
+
+cn_hpc_composition <- read.csv('/gpfs/data/tsirigoslab/home/leh06/nyustage1_geomx/nyustage1_tma_luad_protein_roi_cnhpc_composition.csv')
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(compositions)
+library(ggplot2)
+library(tidyr)
+
+# 1. Turn protein_counts_mat into ROI-by-protein df
+prot_df <- as.data.frame(t(protein_counts_mat)) %>%
+  rownames_to_column(var = "ROI")
+prot_names <- colnames(prot_df)[-1]
+
+# 2. Clean up cluster_df
+clus_df <- cn_hpc_composition %>%
+  rename(ROI = X)
+names(clus_df) <- str_replace_all(names(clus_df), "\\.", "-")
+clus_names <- setdiff(names(clus_df), "ROI")
+
+# 3. Join
+df_all <- inner_join(clus_df, prot_df, by = "ROI")
+
+# 4. Prepare protein_info & factor levels
+protein_info <- tibble(tag = protein_targets, protein = protein_names) %>%
+  mutate(
+    supergroup = case_when(
+      str_detect(tag, "Stroma|Fibroblasts")                                     ~ "Stroma",
+      str_detect(tag, "Housekeepers|Background")                                 ~ "Others",
+      str_detect(tag, "Proliferation")                                           ~ "Proliferation",
+      str_detect(tag, regex("Total Immune|T cells|Th cells|Tregs|Naive and Memory", ignore_case=TRUE)) ~ "Tcells",
+      str_detect(tag, regex("B cells", ignore_case=TRUE))                        ~ "B cells",
+      str_detect(tag, "Interferon")                                              ~ "Interferon",
+      str_detect(tag, regex("Myeloid|Macrophage|Monocyte|Neutrophil|DC", ignore_case=TRUE)) ~ "Myeloid",
+      str_detect(tag, "Epithelial|Tumor$")                                       ~ "Epithelial",
+      str_detect(tag, "PI3K-AKT")                                                ~ "PI3K-AKT",
+      str_detect(tag, "Apoptosis|Caspase")                                       ~ "Apoptosis",
+      str_detect(tag, "MAPK")                                                    ~ "MAPK",
+      str_detect(tag, "Tumor Suppressor")                                        ~ "Tumor Suppressor",
+      str_detect(tag, "DNA Damage")                                              ~ "DNA Damage",
+      TRUE                                                                       ~ "Others"
+    )
+  )
+
+sg_order <- c(
+  "Stroma", "Others", "Epithelial",
+  "Tcells", "B cells", "Interferon", "Myeloid",
+  "Proliferation", "PI3K-AKT", "MAPK", "Apoptosis", "Tumor Suppressor", "DNA Damage"
+)
+
+new_prot_levels <- protein_info %>%
+  mutate(supergroup = factor(supergroup, levels = sg_order)) %>%
+  arrange(supergroup, protein) %>%
+  pull(protein) %>%
+  unique()
+
+# 5. Split into PanK+ / PanK-
+df_sets <- list(
+  pankplus  = df_all %>% filter(str_detect(ROI, fixed("PanK+"))),
+  pankminus = df_all %>% filter(str_detect(ROI, fixed("PanK-")))
+)
+
+# 6. Pipeline function
+analyze_subset <- function(df, suffix) {
+  # ensure numeric
+  df[prot_names] <- lapply(df[prot_names], function(x) {
+    if (is.factor(x)) x <- as.character(x)
+    as.numeric(x)
+  })
+  # log2(+1) & scale
+  df[prot_names] <- scale(log2(df[prot_names] + 1))
+  # CLR clusters
+  df[clus_names] <- clr(acomp(df[clus_names]))
+  # cor tests
+  results <- expand.grid(protein = prot_names,
+                         cluster = clus_names,
+                         stringsAsFactors = FALSE) %>%
+    rowwise() %>%
+    mutate(
+      ct   = list(cor.test(df[[protein]], df[[cluster]], method = "spearman")),
+      rho  = ct$estimate,
+      pval = ct$p.value
+    ) %>%
+    unnest(cols = c(rho, pval)) %>%
+    ungroup() %>%
+    mutate(
+      padj     = p.adjust(pval, method = "BH"),
+      padj     = if_else(padj <= 0.05, padj, NA_real_)
+    )
+  # factor levels
+  results$protein  <- factor(results$protein,  levels = new_prot_levels)
+  results$cluster  <- factor(results$cluster,  levels = clus_names)
+  # plot
+  png(
+    filename = paste0("/gpfs/scratch/leh06/NivoPembro_Results/nyustage1_proteomics_cnHPC_", suffix, ".png"),
+    res      = 300, units = "in", width = 16, height = 16
+  )
+  print(ggplot(results, aes(x = cluster, y = protein)) +
+    geom_point(aes(size = padj, fill = rho),
+               shape = 21, color = "black", stroke = 0.2, na.rm = TRUE) +
+    scale_fill_gradient2(
+      low      = "blue", mid    = "white", high = "red",
+      midpoint = 0, name = "Spearman ρ"
+    ) +
+    scale_size_continuous(
+      name  = "Adjusted p-value", range   = c(1, 5),
+      trans = "reverse", guide = guide_legend(nbin = 4, override.aes = list(fill = "grey"))
+    ) +
+    theme_bw(base_rect_size = 1, base_line_size = 0.3) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 15),
+      axis.text.y = element_text(size = 15),
+      axis.title  = element_blank(),
+      legend.text = element_text(size = 15),
+      legend.title= element_text(size = 15)
+    ))
+  dev.off()
+}
+
+# 7. Run for both subsets
+walk2(df_sets, names(df_sets), analyze_subset)
+```
+```{r}
+for (i in sg_order){
+  print(i)
+  print(protein_info[protein_info$supergroup ==i, 'protein'])
+}
+```
+
